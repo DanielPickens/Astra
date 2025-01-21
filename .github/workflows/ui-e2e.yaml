@@ -1,0 +1,55 @@
+name: Dev UI E2E tests
+on:
+  pull_request:
+    branches:    
+      - main
+    paths:
+      - 'ui/**'
+      - '.github/workflows/ui-e2e.yaml'
+
+jobs:
+  cypress-run:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build astra
+        run: make bin
+
+      - name: Set astra in system path
+        run: |
+          mkdir -p "$HOME/.local/bin/"
+          mv ./astra "$HOME/.local/bin/astra"
+          chmod +x "$HOME/.local/bin/astra"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cypress run
+        uses: cypress-io/github-action@v6
+        env:
+          astra_EXPERIMENTAL_MODE: "true"
+          astra_TRACKING_CONSENT: "no"
+        with:
+          working-directory: ui
+          # Run astra against the UI itself
+          start: |
+            astra api-server --port 20000
+            npm start
+          wait-on: 'http://localhost:20000, http://localhost:4200'
+          wait-on-timeout: 180
+
+      # after the test run completes, store videos and any screenshots only upon a failure
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: cypress-artifacts
+          path: |
+            ui/cypress/screenshots/
+            ui/cypress/videos/
+          if-no-files-found: warn
+          retention-days: 7

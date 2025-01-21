@@ -1,0 +1,124 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+In order to use `astra deploy`, you must be able to build an image as well as push to a registry.
+
+#### Step 1. Let `astra` know where to push container images
+
+`astra` needs to know where to push non-absolute container images declared in the `devfile.yaml` file.
+
+You can configure `astra` with the `astra preference set` command, like so:
+
+```shell
+astra preference set ImageRegistry $registry
+```
+
+<details>
+<summary>Example Output</summary>
+
+```console
+$ astra preference set ImageRegistry ttl.sh
+ ✓  Value of 'imageregistry' preference was set to 'ttl.sh'
+```
+
+</details>
+
+#### Step 2 (Optional). Login to your container registry
+
+If the container registry you registered requires some form of authentication, you will need to login to it.
+
+Note that the cluster you are deploying to also needs to be able to pull images from this registry in order for the application container to be started properly.
+
+<Tabs
+defaultValue="podman"
+values={[
+{label: 'Podman', value: 'podman'},
+{label: 'Docker', value: 'docker'},
+]}>
+
+<TabItem value="podman">
+
+```shell
+podman login $registry
+```
+
+<details>
+<summary>Example Output</summary>
+
+```console
+$ podman login quay.io
+Username:
+Password:
+Login Succeeded!
+```
+
+</details>
+
+</TabItem>
+
+<TabItem value="docker">
+
+```shell
+docker login $registry
+```
+
+<details>
+<summary>Example Output</summary>
+
+```console
+$ docker login docker.io
+Username:
+Password:
+Login Succeeded!
+```
+
+</details>
+
+</TabItem>
+
+</Tabs>
+
+#### Step 3. Set the appropriate container build platform
+
+Your container image build must match the same architecture as the cluster you are deploying to.
+
+For example: you will have to cross-build a AMD64 image on a Mac M1 (ARM64) in order to deploy to a AMD64 cluster.
+
+`astra` allows you to do so via the [`astra_IMAGE_BUILD_ARGS` environment variable](/overview/configure.md#environment-variables-controlling-astra-behavior),
+which is a semicolon-separated list of extra arguments to pass to Podman or Docker when building images.
+
+Choose your deployment architecture:
+
+<Tabs
+defaultValue="linuxamd64"
+values={[
+{label: 'Linux (AMD64)', value: 'linuxamd64'},
+{label: 'Linux (ARM)', value: 'linuxarm64'},
+{label: 'Windows (AMD64)', value: 'windowsamd64'},
+]}>
+
+<TabItem value="linuxamd64">
+
+```shell
+export astra_IMAGE_BUILD_ARGS="--platform=linux/amd64"
+```
+
+</TabItem>
+
+<TabItem value="linuxarm64">
+
+```shell
+export astra_IMAGE_BUILD_ARGS="--platform=linux/arm64"
+```
+
+</TabItem>
+
+<TabItem value="windowsamd64">
+
+```shell
+export astra_IMAGE_BUILD_ARGS="--platform=windows/amd64"
+```
+
+</TabItem>
+
+</Tabs>

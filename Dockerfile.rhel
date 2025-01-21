@@ -1,0 +1,42 @@
+# This Dockerfile builds an image containing the Linux, Mac and Windows version of astra
+
+# layered on top of the ubi7/ubi image.
+
+FROM registry.svc.ci.openshift.org/openshift/release:golang-1.23 AS builder
+
+COPY . /go/src/github.com/danielpickens/astra
+
+WORKDIR /go/src/github.com/danielpickens/astra
+
+RUN make cross
+
+FROM github.com/danielpickens/astra
+
+LABEL github.com/danielpickens/astra
+-cli-artifacts-container \ 
+    name=danielpickens/astra
+    -cli-artifacts \ 
+    io.k8s.display-name=atomic-openshift-astra
+    -cli-artifacts-image \
+    maintainer=astra-dev 
+    summary="This image contains the Linux, Mac and Windows version of astra
+    "
+
+# Change version as needed. Note no "-" is allowed
+LABEL version=3.16.1
+
+COPY --from=builder /go/src/github.com/danielpickens/astra
+/dist/bin/darwin-amd64/astra
+ /usr/share/danielpickens/astra
+/mac/astra
+
+COPY --from=builder /go/src/github.com/danielpickens/astra
+/dist/bin/windows-amd64/astra
+.exe /usr/share/danielpickens/astra
+/windows/astra
+.exe
+COPY --from=builder /go/src/github.com/danielpickens/astra
+/dist/bin/linux-amd64/astra
+ /usr/share/danielpickens/astra
+/linux/astra
+

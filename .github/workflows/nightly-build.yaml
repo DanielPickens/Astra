@@ -1,0 +1,177 @@
+name: Nightly builds
+
+on:
+  # workflow_dispatch so that it can be triggered manually if needed
+  workflow_dispatch:
+
+  schedule:
+    - cron: "34 21 * * *"
+
+concurrency: ${{ github.workflow }}
+
+env:
+  IBM_CLOUD_API_KEY: ${{ secrets.IBM_CLOUD_API_KEY_NIGHTLY_BUILDS }}
+  IBM_CLOUD_RESOURCE_GROUP: ${{ secrets.IBM_CLOUD_RESOURCE_GROUP }}
+  IBM_CLOUD_REGION: us-east
+  IBM_CLOUD_OBJET_STORAGE_SERVICE_INSTANCE: ${{ secrets.IBM_CLOUD_OBJET_STORAGE_SERVICE_INSTANCE }}
+  IBM_CLOUD_OBJECT_STORAGE_BUCKET: ${{ secrets.IBM_CLOUD_OBJECT_STORAGE_BUCKET }}
+
+jobs:
+
+  check_bucket:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install IBM Cloud CLI
+        run: |
+          curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
+          ibmcloud --version
+          ibmcloud config --check-version=false
+          ibmcloud plugin install -f cloud-object-storage
+
+      - name: Authenticate with IBM Cloud CLI
+        run: |
+          ibmcloud login --apikey "${IBM_CLOUD_API_KEY}" -r "${IBM_CLOUD_REGION}" -g "${IBM_CLOUD_RESOURCE_GROUP}" --quiet
+
+      - name: Set CRN
+        run: |
+          CRN=$(ibmcloud resource service-instance "${IBM_CLOUD_OBJET_STORAGE_SERVICE_INSTANCE}" --output json | jq -r '.[0].guid | values')
+          if [[ -z "$CRN" ]]; then
+            echo "Unable to determine CRN for service instance ${IBM_CLOUD_OBJET_STORAGE_SERVICE_INSTANCE}"
+            exit 1
+          fi
+          ibmcloud cos config crn --crn "${CRN}"
+
+      - name: Check if bucket exists
+        run: |
+          if ! ibmcloud cos buckets | grep "${IBM_CLOUD_OBJECT_STORAGE_BUCKET}"; then
+            echo "Bucket not found: ${IBM_CLOUD_OBJECT_STORAGE_BUCKET}"
+            exit 1
+          fi
+
+  build_for_platform:
+    runs-on: ubuntu-latest
+    needs: check_bucket
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux, darwin, windows]
+        arch: [amd64, arm64, ppc64le, s390x]
+        exclude:
+          - os: darwin
+            arch: ppc64le
+          - os: darwin
+            arch: s390x
+          - os: windows
+            arch: arm64
+          - os: windows
+            arch: ppc64le
+          - os: windows
+            arch: s390x
+    name: "${{ matrix.os }}-${{ matrix.arch }}"
+    env:
+      GOOS: ${{ matrix.os }}
+      GOARCH: ${{ matrix.arch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Get commit ID
+        run: |
+          sha=$(git describe --no-match --always --abbrev=9 --dirty --broken 2>/dev/null || git rev-parse --short HEAD 2>/dev/null)
+          echo "SHORT_SHA=${sha}" >> "$GITHUB_ENV"
+
+      - name: Determine bin info
+        run: |
+          version="${{ env.SHORT_SHA }}-nightly"
+          binNameNoExt="astra-$GOOS-$GOARCH"
+          binName="${binNameNoExt}"
+          binNameWithSha="${binNameNoExt}-${{ env.SHORT_SHA }}"
+          if [ $GOOS == "windows" ]; then
+            binName="${binName}.exe"
+            binNameWithSha="${binNameWithSha}.exe"
+          fi
+          echo "BIN_NAME=${binName}" >> "$GITHUB_ENV"
+          echo "BIN_NAME_WITH_SHA=${binNameWithSha}" >> "$GITHUB_ENV"
+
+      - name: Determine if binary exists for commit ID
+        id: check_bin
+        run: |
+          baseUrl="https://s3.${IBM_CLOUD_REGION}.cloud-object-storage.appdomain.cloud/${IBM_CLOUD_OBJECT_STORAGE_BUCKET}"
+          binNameWithSha="${{ env.BIN_NAME_WITH_SHA }}"
+          binExists="false"
+          if curl -sfILo /dev/null "${baseUrl}/${binNameWithSha}"; then
+            binExists="true"
+          fi
+          echo "binExists=${binExists}" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile
+        if: ${{ steps.check_bin.outputs.binExists != 'true' }}
+        env:
+          PROJECT: "github\.com/danielpickens/astra"
+          RELEASE_SEGMENT_WRITE_KEY: ${{ secrets.RELEASE_SEGMENT_WRITE_KEY }}
+        run: |
+          version="${{ env.SHORT_SHA }}-nightly"
+          binName="${{ env.BIN_NAME }}"
+          binNameWithSha="${{ env.BIN_NAME_WITH_SHA }}"
+          go build -o "$binName" \
+            -mod=vendor \
+            -ldflags="-s -w -X ${PROJECT}/pkg/segment.writeKey=${RELEASE_SEGMENT_WRITE_KEY} -X ${PROJECT}/pkg/version.GITCOMMIT=${version}" \
+            ./cmd/astra/
+          cp -vr "$binName" "${binNameWithSha}"
+
+      - name: Generate archive
+        if: ${{ steps.check_bin.outputs.binExists != 'true' }}
+        run: |
+          if [ $GOOS == "windows" ]; then
+            zip -9 -y -r -q "astra-${GOOS}-${GOARCH}.zip" "astra-${GOOS}-${GOARCH}.exe"
+            zip -9 -y -r -q "astra-${GOOS}-${GOARCH}-${{ env.SHORT_SHA }}.zip" "astra-${GOOS}-${GOARCH}-${{ env.SHORT_SHA }}.exe"
+          else
+            tar -czvf "astra-${GOOS}-${GOARCH}.tar.gz" "astra-${GOOS}-${GOARCH}"
+            tar -czvf "astra-${GOOS}-${GOARCH}-${{ env.SHORT_SHA }}.tar.gz" "astra-${GOOS}-${GOARCH}-${{ env.SHORT_SHA }}"
+          fi
+
+      - name: Generate SHA-256 checksums
+        if: ${{ steps.check_bin.outputs.binExists != 'true' }}
+        run: |
+          for f in `find . -type f -name 'astra-${{ matrix.os }}-${{ matrix.arch }}*'`; do
+            bin=$(realpath "$f")
+            sha256sum -b "${bin}" | awk '{print $1}' > "${bin}".sha256
+          done
+
+      - name: Install IBM Cloud CLI
+        if: ${{ steps.check_bin.outputs.binExists != 'true' }}
+        run: |
+          curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
+          ibmcloud --version
+          ibmcloud config --check-version=false
+          ibmcloud plugin install -f cloud-object-storage
+
+      - name: Authenticate with IBM Cloud CLI
+        if: ${{ steps.check_bin.outputs.binExists != 'true' }}
+        run: |
+          ibmcloud login --apikey "${IBM_CLOUD_API_KEY}" -r "${IBM_CLOUD_REGION}" -g "${IBM_CLOUD_RESOURCE_GROUP}" --quiet
+
+      - name: Set CRN
+        if: ${{ steps.check_bin.outputs.binExists != 'true' }}
+        run: |
+          CRN=$(ibmcloud resource service-instance "${IBM_CLOUD_OBJET_STORAGE_SERVICE_INSTANCE}" --output json | jq -r '.[0].guid | values')
+          if [[ -z "$CRN" ]]; then
+            echo "Unable to determine CRN for service instance ${IBM_CLOUD_OBJET_STORAGE_SERVICE_INSTANCE}"
+            exit 1
+          fi
+          ibmcloud cos config crn --crn "${CRN}"
+
+      - name: Upload binaries
+        if: ${{ steps.check_bin.outputs.binExists != 'true' }}
+        run: |
+          baseUrl="https://s3.${IBM_CLOUD_REGION}.cloud-object-storage.appdomain.cloud/${IBM_CLOUD_OBJECT_STORAGE_BUCKET}"
+          for f in `find . -type f -name 'astra-${{ matrix.os }}-${{ matrix.arch }}*'`; do
+            bin=$(realpath "$f")
+            ibmcloud cos upload --bucket "${IBM_CLOUD_OBJECT_STORAGE_BUCKET}" --key $(basename "$f") --file "${bin}"
+            echo "Binary $bin uploaded successfully and available at: ${baseUrl}/$(basename "$f")"
+          done

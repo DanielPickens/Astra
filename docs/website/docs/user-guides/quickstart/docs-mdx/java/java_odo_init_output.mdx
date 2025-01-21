@@ -1,0 +1,35 @@
+```console
+$ astra init
+  __
+ /  \__     Initializing a new component
+ \__/  \    Files: Source code detected, a Devfile will be determined based upon source code autodetection
+ /  \__/    astra version: v3.16.1
+ \__/
+
+Interactive mode enabled, please answer the following questions:
+ ✓  Determining a Devfile for the current directory [1s]
+Based on the files in the current directory astra detected
+Supported architectures: all
+Language: Java
+Project type: springboot
+The devfile "java-springboot:1.3.0" from the registry "DefaultDevfileRegistry" will be downloaded.
+? Is this correct? Yes
+ ✓  Downloading devfile "java-springboot:1.3.0" from registry "DefaultDevfileRegistry" [3s]
+
+↪ Container Configuration "tools":
+  OPEN PORTS:
+    - 8080
+    - 5858
+  ENVIRONMENT VARIABLES:
+    - DEBUG_PORT = 5858
+
+? Select container for which you want to change configuration? NONE - configuration is correct
+? Enter component name: my-java-app
+
+You can automate this command by executing:
+   astra init --name my-java-app --devfile java-springboot --devfile-registry DefaultDevfileRegistry --devfile-version 1.3.0
+
+Your new component 'my-java-app' is ready in the current directory.
+To start editing your component, use 'astra dev' and open this folder in your favorite IDE.
+Changes will be directly reflected on the cluster.
+```

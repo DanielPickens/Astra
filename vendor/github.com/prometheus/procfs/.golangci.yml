@@ -1,0 +1,12 @@
+---
+linters:
+  enable:
+  - gastrat
+  - revive
+
+linter-settings:
+  gastrat:
+    capital: true
+    exclude:
+    # Ignore "See: URL"
+    - 'See:'

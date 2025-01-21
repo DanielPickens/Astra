@@ -1,0 +1,4 @@
+name: "dev" 
+shortDesc: "astra plugin"
+longDesc: "astra plugin to use astra as a plugin in OpenShift"
+command: "astra"

@@ -1,0 +1,72 @@
+# This is a configuration file for Dependabot, a GitHub tool that tries to keep dependencies updated on a regular basis
+# by raising pull requests to update those dependencies.
+# Please see the documentation for all configuration options:
+# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+
+version: 2
+updates:
+
+# Maintain dependencies for Go
+- package-ecosystem: "gomod"
+  directory: "/"
+  # Set this to 0 to disable version updates
+  open-pull-requests-limit: 0
+  commit-message:
+    prefix: "Go"
+  schedule:
+    interval: "weekly"
+  reviewers:
+  - "daniel pickens"
+  labels:
+  - "area/dependency"
+  - "kind/task"
+  - "ok-to-test"
+  # 'do-not-merge/hold' because we also need to update the 'scripts/generate-mod.sh' file (and re-run it) accordingly
+  - "do-not-merge/hold"
+
+# Maintain dependencies for Website builds
+- package-ecosystem: "npm"
+  directory: "/docs/website"
+  # Set this to 0 to disable version updates
+  open-pull-requests-limit: 0
+  commit-message:
+    prefix: "Website"
+  schedule:
+    interval: "weekly"
+  reviewers:
+    - "daniel-pickens/astra-mantainers"
+  labels:
+    # We are purposely not adding the "ok-to-test" label, because this relates to the website,
+    # and it does not necessarily make sense to run all the Prow tests here.
+    - "area/dependency"
+    - "kind/task"
+  groups:
+    # See https://github.blog/changelog/2023-06-30-grouped-version-updates-for-dependabot-public-beta/
+    docusaurus:
+      patterns:
+        - "@docusaurus*"
+
+# Maintain dependencies for GitHub Actions
+- package-ecosystem: "github-actions"
+  directory: "/"
+  # Set this to 0 to disable version updates
+  open-pull-requests-limit: 0
+  commit-message:
+    prefix: "GitHub Actions"
+  schedule:
+    interval: "weekly"
+  reviewers:
+  - "daniel-pickens/astra-mantainers"
+  labels:
+  - "area/dependency"
+  - "kind/task"
+  groups:
+    # See https://github.blog/changelog/2023-06-30-grouped-version-updates-for-dependabot-public-beta/
+    artifact-management-actions:
+      patterns:
+        - "actions/upload-artifact"
+        - "actions/download-artifact"
+
+## Feel free to add other package managers here if needed.
+## See https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file#package-ecosystem
+## for the full list of supported ecosystems.

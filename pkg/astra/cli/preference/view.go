@@ -1,0 +1,148 @@
+package preference
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+
+	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/spf13/cobra"
+	ktemplates "k8s.io/kubectl/pkg/util/templates"
+
+	"github\.com/danielpickens/astra/pkg/api"
+	"github\.com/danielpickens/astra/pkg/log"
+	"github\.com/danielpickens/astra/pkg/astra/cli/ui"
+	"github\.com/danielpickens/astra/pkg/astra/cmdline"
+	"github\.com/danielpickens/astra/pkg/astra/commonflags"
+	"github\.com/danielpickens/astra/pkg/astra/genericclioptions"
+	"github\.com/danielpickens/astra/pkg/astra/genericclioptions/clientset"
+)
+
+const viewCommandName = "view"
+
+var viewExample = ktemplates.Examples(`# View all set preference values 
+   %[1]s
+  `)
+
+// ViewOptions encapsulates the options for the command
+type ViewOptions struct {
+	// Clients
+	clientset *clientset.Clientset
+}
+
+var _ genericclioptions.Runnable = (*ViewOptions)(nil)
+
+// NewViewOptions creates a new ViewOptions instance
+func NewViewOptions() *ViewOptions {
+	return &ViewOptions{}
+}
+
+func (o *ViewOptions) SetClientset(clientset *clientset.Clientset) {
+	o.clientset = clientset
+}
+
+func (o *ViewOptions) UseDevfile(ctx context.Context, cmdline cmdline.Cmdline, args []string) bool {
+	return false
+}
+
+// Complete completes ViewOptions after they've been created
+func (o *ViewOptions) Complete(ctx context.Context, cmdline cmdline.Cmdline, args []string) (err error) {
+	return
+}
+
+// Validate validates the ViewOptions based on completed values
+func (o *ViewOptions) Validate(ctx context.Context) (err error) {
+	return
+}
+
+// Run contains the logic for the command
+func (o *ViewOptions) Run(ctx context.Context) (err error) {
+	preferenceList := o.clientset.PreferenceClient.NewPreferenceList()
+	registryList, err := o.clientset.RegistryClient.GetDevfileRegistries("")
+	if err != nil {
+		return err
+	}
+	HumanReadableOutput(preferenceList, registryList)
+	return
+}
+
+func (o *ViewOptions) RunForJsonOutput(ctx context.Context) (result interface{}, err error) {
+	preferenceList := o.clientset.PreferenceClient.NewPreferenceList()
+	registryList, err := o.clientset.RegistryClient.GetDevfileRegistries("")
+	if err != nil {
+		return nil, err
+	}
+
+	return api.PreferenceView{
+		Preferences: preferenceList.Items,
+		Registries:  registryList,
+	}, nil
+}
+
+func HumanReadableOutput(preferenceList api.PreferenceList, registryList []api.Registry) {
+	preferenceT := ui.NewTable()
+	preferenceT.AppendHeader(table.Row{"PARAMETER", "VALUE"})
+	preferenceT.SortBy([]table.SortBy{{Name: "PARAMETER", Mode: table.Asc}})
+	for _, pref := range preferenceList.Items {
+		value := showBlankIfNil(pref.Value)
+		if value != "" && reflect.DeepEqual(value, pref.Default) {
+			value = fmt.Sprintf("%v (default)", value)
+		}
+		preferenceT.AppendRow(table.Row{pref.Name, value})
+	}
+	registryT := ui.NewTable()
+	registryT.AppendHeader(table.Row{"NAME", "URL", "SECURE"})
+
+	for i := range registryList {
+		registry := registryList[i]
+		secure := "No"
+		if registry.Secure {
+			secure = "Yes"
+		}
+		registryT.AppendRow(table.Row{registry.Name, registry.URL, secure})
+	}
+
+	log.Info("Preference parameters:")
+	preferenceT.Render()
+	log.Info("\nDevfile registries:")
+	if len(registryList) == 0 {
+		log.Warning("No devfile registries added to the configuration. Refer to `astra preference add registry -h` to add one")
+		return
+	}
+	registryT.Render()
+}
+
+func showBlankIfNil(intf interface{}) interface{} {
+	imm := reflect.ValueOf(intf)
+
+	// if the value is nil then we should return a blank string
+	if imm.IsNil() {
+		return ""
+	}
+
+	// if its a pointer then we should de-ref it because we cant de-ref an interface{}
+	if imm.Kind() == reflect.Ptr {
+		return imm.Elem().Interface()
+	}
+
+	return intf
+}
+
+// NewCmdView implements the config view astra command
+func NewCmdView(name, fullName string, testClientset clientset.Clientset) *cobra.Command {
+	o := NewViewOptions()
+	preferenceViewCmd := &cobra.Command{
+		Use:     name,
+		Short:   "View current preference values",
+		Long:    "View current preference values",
+		Example: fmt.Sprintf(fmt.Sprint("\n", viewExample), fullName),
+
+		Args: cobra.ExactArgs(0),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return genericclioptions.GenericRun(o, testClientset, cmd, args)
+		},
+	}
+	clientset.Add(preferenceViewCmd, clientset.PREFERENCE, clientset.REGISTRY)
+	commonflags.UseOutputFlag(preferenceViewCmd)
+	return preferenceViewCmd
+}

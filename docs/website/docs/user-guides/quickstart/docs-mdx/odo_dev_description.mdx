@@ -1,0 +1,56 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+Now that we've generated our code as well as our Devfile, let's start on development.
+
+`astra` uses [inner loop development](/docs/introduction#what-is-inner-loop-and-outer-loop) and allows you to code,
+build, run and test the application in a continuous workflow.
+
+Once you run `astra dev`, you can freely edit code in your favourite IDE and watch as `astra` rebuilds and redeploys it.
+
+<p>Let's run <code>astra dev</code> to start development on your <span>{props.framework}</span> application:</p>
+
+<Tabs groupId="quickstart">
+
+  <TabItem value="podman" label="Podman">
+
+  ```console
+  astra dev --platform podman
+  ```
+<details>
+    <summary>Sample Output</summary>
+    {props.devpodmanout}
+</details>
+
+  </TabItem>
+
+  <TabItem value="kubernetes" label="Kubernetes">
+
+  ```console
+  astra dev
+  ```
+<details>
+    <summary>Sample Output</summary>
+    {props.devout}
+</details>
+
+  </TabItem>
+
+  <TabItem value="openshift" label="OpenShift">
+
+  ```console
+  astra dev
+  ```
+<details>
+    <summary>Sample Output</summary>
+    {props.devout}
+</details>
+
+  </TabItem>
+</Tabs>
+
+Then wait a few seconds until `astra dev` displays `Forwarding from 127.0.0.1:...` in its output,
+meaning that `astra` has successfully set up port forwarding to reach the application running in the container.
+
+You can now access the application via the local port displayed by `astra dev` ([127.0.0.1:20001](http://127.0.0.1:20001) in the sample output above) and start your development loop.
+`astra` will watch for changes and push the code for real-time updates.

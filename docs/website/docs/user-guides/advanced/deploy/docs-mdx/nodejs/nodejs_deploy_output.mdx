@@ -1,0 +1,28 @@
+```console
+$ astra deploy
+  __
+ /  \__     Deploying the application using my-nodejs-app Devfile
+ \__/  \    Namespace: astra-dev
+ /  \__/    astra version: v3.16.1
+ \__/
+
+↪ Building & Pushing Container: ttl.sh/my-nodejs-app-my-nodejs-app:611242
+ •  Building image locally  ...
+build -t ttl.sh/my-nodejs-app-my-nodejs-app -f /home/user/quickstart-demo/nodejs-demo/Dockerfile /home/user/quickstart-demo/nodejs-demo
+ ✓  Building image locally
+ •  Pushing image to container registry  ...
+push ttl.sh/my-nodejs-app-my-nodejs-app
+ ✓  Pushing image to container registry
+
+↪ Deploying Kubernetes Component: my-nodejs-app
+ ✓  Creating resource Deployment/my-nodejs-app
+
+↪ Deploying Kubernetes Component: my-nodejs-app
+ ✓  Creating resource Service/my-nodejs-app
+
+↪ Deploying Kubernetes Component: my-nodejs-app
+ ✓  Creating resource Ingress/my-nodejs-app
+
+Your Devfile has been successfully deployed
+
+```

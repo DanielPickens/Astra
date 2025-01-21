@@ -1,0 +1,749 @@
+---
+title: astra dev
+---
+
+`astra dev` is used in order to quickly and effectively iterate through your development process for building an application.
+
+This is [inner loop](../introduction#what-is-inner-loop-and-outer-loop) development and allows you to code, build, run and test the application in a continuous workflow.
+
+## Running the Command
+
+If you haven't already done so, you must [initialize](../command-reference/init) your source code with the `astra init` command.
+
+Afterwards, run `astra dev`:
+
+```console
+astra dev
+```
+<details>
+<summary>Example</summary>
+
+```console
+$ astra dev
+  __
+ /  \__     Developing using the my-nodejs-app Devfile
+ \__/  \    Namespace: default
+ /  \__/    astra version: v3.0.0-alpha1
+ \__/
+
+↪ Running on the cluster in Dev mode
+ ✓  Waiting for Kubernetes resources [3s]
+ ✓  Syncing files into the container [335ms]
+ ✓  Building your application in container on cluster [2s]
+ ✓  Executing the application [1s]
+
+Your application is now running on the cluster
+ - Forwarding from 127.0.0.1:40001 -> 3000
+
+Watching for changes in the current directory /Users/user/nodejs
+
+[Ctrl+c] - Exit and delete resources from the cluster
+     [p] - Manually apply local changes to the application on the cluster
+```
+</details>
+
+
+In the above example, three things have happened:
+  * Your application has been built and deployed to the cluster
+  * `astra` has port-forwarded your application for local accessibility
+  * `astra` will watch for changes in the current directory and rebuild the application when changes are detected
+
+You can press Ctrl-c at any time to terminate the development session. The command can take a few moment to terminate, as it
+will first delete all resources deployed into the cluster for this session before terminating.
+
+### Applying local changes to the application on the cluster
+
+By default, the changes made by the user to the Devfile and source files are applied directly.
+
+The flag `--no-watch` can be used to change this behaviour: when the user changes the devfile or any source file, the changes
+won't be applied immediately, but the next time the user presses the `p` key.
+
+Depending on the local changes, different events can occur on the cluster:
+
+- if source files are modified, they are pushed to the container running the application, and:
+  - if the `build` command is marked as `HotReloadCapable`, the application is responsible for building the application with the new changes
+  - if the `build` command is not marked as `HotReloadCapable`, the `build` command is executed again
+  - if the `run` command is marked as `HotReloadCapable`, the application is responsible for applying the new changes
+  - if the `run` command is not marked as `HotReloadCapable`, the application is stopped, then restarted by astra using the `run` command again.
+- if the Devfile is modified, the deployment of the application is modified with the new changes. In some circumstances, this may
+  cause the restart of the container running the application and therefore the application itself.
+
+
+### Running an alternative command
+
+#### Running an alternative build command
+By default, `astra dev` builds the application using the default Build command defined in the Devfile,
+i.e, the command with a group `kind` set to `build` and with `isDefault` set to `true`, if any.
+
+Passing the `build-command` flag allows to override this behavior by running any other command, provided it is in the `build` group in the Devfile.
+
+For example, given the following excerpt from a Devfile:
+```yaml
+- id: my-build
+  exec:
+    commandLine: go build main.go
+    component: tools
+    workingDir: ${PROJECT_SOURCE}
+    group:
+      isDefault: true
+      kind: build
+
+- id: my-build-with-version
+  exec:
+    commandLine: go build -ldflags="-X main.version=v1.0.0" main.go
+    component: tools
+    workingDir: ${PROJECT_SOURCE}
+    group:
+      kind: build
+```
+
+- running `astra dev` will build the application using the default `my-build` command.
+- running `astra dev --build-command my-build-with-version` will build the application using the `my-build-with-version` command:
+```console
+astra dev --build-command my-build-with-version
+```
+
+<details>
+<summary>Example</summary>
+
+```console
+$ astra dev --build-command my-build-with-version
+
+  __
+ /  \__     Developing using the my-sample-go Devfile
+ \__/  \    Namespace: default
+ /  \__/    astra version: v3.0.0-alpha3
+ \__/
+
+↪ Running on the cluster in Dev mode
+ ✓  Waiting for Kubernetes resources [39s]
+ ✓  Syncing files into the container [84ms]
+ ✓  Building your application in container on cluster (command: my-build-with-version) [456ms]
+ •  Executing the application (command: run)  ...
+
+Your application is now running on the cluster
+ - Forwarding from 127.0.0.1:40001 -> 8080
+
+Watching for changes in the current directory /path/to/my/sources/go-app
+
+[Ctrl+c] - Exit and delete resources from the cluster
+     [p] - Manually apply local changes to the application on the cluster
+```
+</details>
+
+
+#### Running an alternative run command
+
+By default, `astra dev` executes the default Run command defined in the Devfile, 
+i.e, the command with a group `kind` set to `run` and its `isDefault` field set to `true`.
+
+Passing the `run-command` flag allows to override this behavior by running any other non-default command, provided it is in the `run` group in the Devfile.
+
+For example, given the following excerpt from a Devfile:
+```yaml
+- id: my-run
+  exec:
+    commandLine: mvn spring-boot:run
+    component: tools
+    workingDir: ${PROJECT_SOURCE}
+    group:
+      isDefault: true
+      kind: run
+
+- id: my-run-with-postgres
+  exec:
+    commandLine: mvn spring-boot:run -Dspring-boot.run.profiles=postgres
+    component: tools
+    workingDir: ${PROJECT_SOURCE}
+    group:
+      isDefault: false
+      kind: run
+```
+
+- running `astra dev` will run the default `my-run` command
+- running `astra dev --run-command my-run-with-postgres` will run the `my-run-with-postgres` command:
+```console
+astra dev --run-command my-run-with-postgres
+```
+<details>
+<summary>Example</summary>
+
+```console
+$ astra dev --run-command my-run-with-postgres
+
+  __
+ /  \__     Developing using the my-java-springboot-app Devfile
+ \__/  \    Namespace: default
+ /  \__/    astra version: v3.0.0-alpha3
+ \__/
+
+↪ Running on the cluster in Dev mode
+ ✓  Added storage m2 to my-java-springboot-app
+ ✓  Creating kind ServiceBinding [8ms]
+ ✓  Waiting for Kubernetes resources [39s]
+ ✓  Syncing files into the container [84ms]
+ ✓  Building your application in container on cluster (command: build) [51s]
+ •  Executing the application (command: my-run-with-postgres)  ...
+
+Your application is now running on the cluster
+ - Forwarding from 127.0.0.1:40002 -> 8080
+
+Watching for changes in the current directory /path/to/my/sources/java-springboot-app
+
+[Ctrl+c] - Exit and delete resources from the cluster
+     [p] - Manually apply local changes to the application on the cluster
+
+```
+</details>
+
+
+### Substituting variables
+
+The Devfile can define variables to make the Devfile parameterizable. The Devfile can define values for these variables, and you 
+can override the values for variables from the command line when running `astra dev`, using the `--var` and `--var-file` options.
+
+The `--var` option is a repeatable option that takes a `variable=value` pair, where `=value` is optional. If the `=value` is omitted, the value is extracted from the environment variable named `variable`. In this case, if the environment variable with this name is not defined, the value defined into the Devfile will be used.
+
+The `--var-file` option takes a filename as argument. The file contains a line-separated list of `variable=value` pairs, with the same behaviour as before.  
+
+Note that the values passed with the `--var` option overrides the values obtained with the `--var-file` option.
+
+#### Examples
+
+Considering the Devfile contains this `variables` field:
+
+```
+variables:
+  USER: anonymous
+  DEBUG: false
+```
+
+
+This command will override the `USER` Devfile variable with the value of the `USER` environment variable, if it is defined.
+It will also override the value of the `DEBUG` Devfile variable with the `true` value.
+
+```shell
+astra dev --var USER --var DEBUG=true
+```
+
+If you create a file `config.vars` containing:
+
+```
+USER
+DEBUG=true
+```
+
+The following command will have the same behaviour as the previous one:
+
+```shell
+astra dev --var-file config.vars
+```
+
+The following command will override the `USER` Devfile variable with the `john` value:
+
+
+```shell
+astra dev --var USER=john --var-file config.vars
+```
+
+
+### Using custom port mapping for port forwarding
+Custom local ports can be passed for port forwarding with the help of the `--port-forward` flag. This feature is supported on both podman and cluster.
+
+This feature can be helpful when you want to provide consistent and predictable port numbers and avoid being assigned a potentially different port number every time `astra dev` is run.
+
+Supported formats for this flag include:
+1. `<LOCAL_PORT>:<CONTAINER_PORT>`
+2. `<LOCAL_PORT>:<CONTAINER_NAME>:<CONTAINER_PORT>` - This format is necessary when multiple container components of a Devfile have the same port number.
+
+The flag accepts a stringArray, so `--port-forward` flag can be defined multiple times.
+
+If a custom port mapping is not defined for a port, `astra` will assign a free port in the range of 20001-30001.
+
+```shell
+astra dev --port-forward <LOCAL_PORT_1>:<CONTAINER_PORT_1> --port-forward <LOCAL_PORT_2>:<CONTAINER_NAME>:<CONTAINER_PORT_2>
+```
+
+<details>
+<summary>Example</summary>
+
+```shell
+$ astra dev --port-forward 3000:runtime:3000 --port-forward 5000:5858 --debug
+  __
+ /  \__     Developing using the "my-nodejs-app" Devfile
+ \__/  \    Namespace: default
+ /  \__/    astra version: v3.9.0
+ \__/
+
+ ⚠  You are using "default" namespace, astra may not work as expected in the default namespace.
+ ⚠  You may set a new namespace by running `astra create namespace <name>`, or set an existing one by running `astra set namespace <name>`
+
+↪ Running on the cluster in Dev mode
+ •  Waiting for Kubernetes resources  ...
+ ⚠  Pod is Pending
+ ✓  Pod is Running
+ ✓  Syncing files into the container [152ms]
+ ✓  Building your application in container (command: install) [27s]
+ •  Executing the application (command: debug)  ...
+ ✓  Waiting for the application to be ready [1s]
+ -  Forwarding from 127.0.0.1:8000 -> 3000
+
+ -  Forwarding from 127.0.0.1:5000 -> 5858
+
+
+↪ Dev mode
+ Status:
+ Watching for changes in the current directory /tmp/nodejs-debug-2
+
+ Keyboard Commands:
+[Ctrl+c] - Exit and delete resources from the cluster
+     [p] - Manually apply local changes to the application on the cluster
+```
+</details>
+
+Note that `--random-ports` flag cannot be used with `--port-forward` flag.
+
+### Using custom address for port forwarding
+A custom address can be passed for port forwarding with the help of `--address` flag. This feature is supported on both podman and cluster.
+The default value is 127.0.0.1.
+
+```shell
+astra dev --address <IP_ADDRESS>
+```
+
+<details>
+<summary>Example</summary>
+
+```shell
+$ astra dev --address 127.0.10.3
+  __
+ /  \__     Developing using the "my-nodejs-app" Devfile
+ \__/  \    Namespace: default
+ /  \__/    astra version: v3.9.0
+ \__/
+
+ ⚠  You are using "default" namespace, astra may not work as expected in the default namespace.
+ ⚠  You may set a new namespace by running `astra create namespace <name>`, or set an existing one by running `astra set namespace <name>`
+
+↪ Running on the cluster in Dev mode
+ •  Waiting for Kubernetes resources  ...
+ ⚠  Pod is Pending
+ ✓  Pod is Running
+ ✓  Syncing files into the container [123ms]
+ ✓  Building your application in container (command: install) [15s]
+ •  Executing the application (command: run)  ...
+ ✓  Waiting for the application to be ready [1s]
+ -  Forwarding from 127.0.10.3:20001 -> 3000
+
+
+↪ Dev mode
+ Status:
+ Watching for changes in the current directory /tmp/nodejs-debug-2
+
+ Keyboard Commands:
+[Ctrl+c] - Exit and delete resources from the cluster
+     [p] - Manually apply local changes to the application on the cluster
+```
+</details>
+
+:::note
+If you are on macOS and using a Cluster platform, you may not be able to run multiple Dev sessions in parallel on address 0.0.0.0 without defining a custom port mapping, or using a different or default address.
+
+For more information, see the following issues:
+1. [Cannot start 2 different Dev sessions on Podman due to conflicting host ports](https://github\.com/danielpickens/astra/issues/6612)
+2. [[MacOS] Cannot run 2 dev sessions simultaneously on cluster](https://github\.com/danielpickens/astra/issues/6744)
+:::
+
+### Running on Podman
+
+Instead of deploying the container into a Kubernetes cluster, `astra dev` can leverage the podman installation on your system to deploy the container.
+
+You need to use the `--platform podman` flags to run the component using podman instead of a Kubernetes cluster.
+
+```console
+astra dev --platform podman
+```
+<details>
+<summary>Example</summary>
+
+```console
+
+$ astra dev --platform podman
+  __
+ /  \__     Developing using the "my-nodejs-app" Devfile
+ \__/  \    Platform: podman
+ /  \__/    astra version: v3.7.0
+ \__/
+
+↪ Running on podman in Dev mode
+ ✓  Deploying pod [4s]
+ ✓  Building your application in container (command: install) [3s]
+ •  Executing the application (command: run)  ...
+ -  Forwarding from 127.0.0.1:20001 -> 3000
+
+↪ Dev mode
+ Status:
+ Watching for changes in the current directory /path/to/project/nodejs
+
+ Keyboard Commands:
+[Ctrl+c] - Exit and delete resources from podman
+     [p] - Manually apply local changes to the application on podman
+```
+</details>
+
+
+### Passing extra args to Podman or Docker when building images
+
+If the Devfile contains an `Image` component that is set to be [automatically created](../development/devfile.md#how-astra-determines-components-that-are-applied-automatically),
+or explicitly referenced in another command execution chain), `astra` will leverage Podman or Docker to build this Image and push it.
+
+Similarly to how [`astra build-images`](build-images.md#passing-extra-args-to-podman-or-docker) works, you can set the [`astra_IMAGE_BUILD_ARGS` environment variable](../overview/configure.md#environment-variables-controlling-astra-behavior),
+which is a semicolon-separated list of extra arguments to pass to Podman or Docker when building images.
+See [this section](build-images.md#passing-extra-args-to-podman-or-docker) for further details.
+
+```shell
+astra_IMAGE_BUILD_ARGS='arg1=value1;arg2=value2;...;argN=valueN' astra dev
+```
+
+<details>
+<summary>Example</summary>
+
+```shell
+$ astra_IMAGE_BUILD_ARGS='--platform=linux/amd64;--build-arg=MY_ARG=my_value' astra dev
+
+  __                                                                                                                                                                                           
+ /  \__     Developing using the "my-nodejs-app" Devfile                                                                                                                                
+ \__/  \    Namespace: default                                                                                                                                                                 
+ /  \__/    astra version: v3.10.0                                                                                                                                                               
+ \__/                                                                                                                                                                                          
+                                                                                                  
+ ⚠  You are using "default" namespace, astra may not work as expected in the default namespace.                                                         
+ ⚠  You may set a new namespace by running `astra create namespace <name>`, or set an existing one by running `astra set namespace <name>`
+
+↪ Building Image: localhost:5000/nodejs-astra-example
+ •  Building image locally  ...
+[1/2] STEP 1/4: FROM registry.access.redhat.com/ubi8/nodejs-14:latest
+[1/2] STEP 2/4: RUN echo XXX $MY_ARG
+--> Using cache cbd3ef1317b96dbef4c9ab3646df49d3770831516c3b5c9f1e15687d67bc8803
+--> cbd3ef1317b9
+[1/2] STEP 3/4: COPY package*.json ./
+--> Using cache de4a08bf2632ef49339beeda4ba50eb6e8a9b7524ffd5717fdcc372c15003b61
+--> de4a08bf2632
+[1/2] STEP 4/4: RUN npm install --production
+--> Using cache 5a37e2783e140582da7ac4e241790e6e2052826c07f46cc0053801f4580e728c
+--> 5a37e2783e14
+[2/2] STEP 1/6: FROM registry.access.redhat.com/ubi8/nodejs-14-minimal:latest
+[2/2] STEP 2/6: COPY --from=0 /opt/app-root/src/node_modules /opt/app-root/src/node_modules
+--> Using cache 8779f5d3753baec5961b5ae017d8246b2674eb70f3c5607e4060f6b38e07c182
+--> 8779f5d3753b
+[2/2] STEP 3/6: COPY . /opt/app-root/src
+--> 6ea250968b12
+[2/2] STEP 4/6: ENV NODE_ENV production
+--> 0bf4dd6605e9
+[2/2] STEP 5/6: ENV PORT 3000
+--> deea4247dd08
+[2/2] STEP 6/6: CMD ["npm", "start"]
+[2/2] COMMIT localhost:5000/nodejs-astra-example
+--> eebc7c012506
+Successfully tagged localhost:5000/nodejs-astra-example:latest
+eebc7c01250682bf4e1e9544de1434d5edb90a51cf2d3e96f0faab354918bedb
+ ✓  Building image locally [3s]
+ •  Pushing image to container registry  ...
+Getting image source signatures
+Copying blob 4577dc5a9258 skipped: already exists  
+Copying blob 6c30129af541 skipped: already exists  
+Copying blob e48a40635da9 skipped: already exists  
+Copying blob 1a5c88cd67e6 skipped: already exists  
+Copying config a4bda6ab2b done  
+Writing manifest to image destination
+Storing signatures
+ ✓  Pushing image to container registry [137ms]
+ •  Waiting for Kubernetes resources  ...
+ ⚠  Pod is Pending
+ ✓  Pod is Running
+ ✓  Syncing files into the container [204ms]
+ ✓  Building your application in container (command: install) [15s]
+ •  Executing the application (command: run)  ...
+ ✓  Waiting for the application to be ready [1s]
+ -  Forwarding from 127.0.0.1:20001 -> 3000
+
+↪ Dev mode
+ Status:
+ Watching for changes in the current directory /path/to/project/nodejs
+
+ Keyboard Commands:
+[Ctrl+c] - Exit and delete resources from the cluster
+     [p] - Manually apply local changes to the application on the cluster
+
+```
+</details>
+
+
+### Passing extra args to Podman when developing on Podman
+
+When [running on Podman](#running-on-podman), you can set the [`astra_CONTAINER_RUN_ARGS` environment variable](../overview/configure.md#environment-variables-controlling-astra-behavior),
+which is a semicolon-separated list of options to pass to Podman when creating the development session Pod.
+
+You can also set the [`astra_CONTAINER_BACKEND_GLOBAL_ARGS` environment variable](../overview/configure.md#environment-variables-controlling-astra-behavior) to pass [global options](https://docs.podman.io/en/latest/markdown/podman.1.html#global-options) to all `podman` commands executed by `astra` (including the commands used for building and pushing images).
+
+```shell
+astra_CONTAINER_BACKEND_GLOBAL_ARGS='--globalArg1=val1;--globalArg2=val2;...;--globalArgN=valN' \
+astra_CONTAINER_RUN_ARGS='--arg1=value1;--arg2=value2;...;--argN=valueN' \
+  astra dev --platform=podman
+```
+
+<details>
+<summary>Example</summary>
+
+```shell
+$ astra_CONTAINER_BACKEND_GLOBAL_ARGS='--root=/tmp/podman/root;--storage-driver=overlay' \
+  astra_CONTAINER_RUN_ARGS='--configmap=cm-foo.yml;--quiet' \
+  astra dev --platform=podman     
+  __
+ /  \__     Developing using the "my-nodejs-app" Devfile
+ \__/  \    Platform: podman
+ /  \__/    astra version: v3.10.0
+ \__/
+
+↪ Running on podman in Dev mode
+ ✓  Deploying pod [2s]
+ ✓  Building your application in container (command: install) [10s]
+ •  Executing the application (command: run)  ...
+ ✓  Waiting for the application to be ready [1s]
+ -  Forwarding from 127.0.0.1:20001 -> 3000
+
+↪ Dev mode
+ Status:
+ Watching for changes in the current directory /path/to/project/nodejs
+
+ Keyboard Commands:
+[Ctrl+c] - Exit and delete resources from podman
+     [p] - Manually apply local changes to the application on podman
+
+```
+</details>
+
+### Running with no commands
+
+The `--no-commands` flag allows to start the Dev Session without implicitly executing any `build`, `run` or `debug` commands.
+
+Specifying this flag will simply create all the resources necessary for the Dev Session, then set up file synchronization and port forwarding.
+In detail, it will:
+1. eventually build and push any `Image` Components defined in the Devfile, if they have the `autoBuild` flag set to `true`
+2. eventually apply any `Kubernetes` or `OpenShift` Components defined in the Devfile, if they have the `deployByDefault` flag set to `true`
+3. Start the Dev container(s), taking care of executing any commands that are bound to [Devfile lifecycle events](../user-guides/advanced/using-devfile-lifecycle-events.md), like [`postStart`](../user-guides/advanced/using-devfile-lifecycle-events.md#poststart)
+4. Synchronize the local files to the Dev environment
+5. Start the port forwarding logic if needed
+
+This gives users complete control over the Dev session, for example by leveraging the [`astra run` command](./run.md) to manually run any command defined in the Devfile.
+
+Note that this is the default behavior of `astra dev` if the Devfile does not define any Build, Run or Debug commands.
+The difference is that if any of those commands is added during the Dev session, a Dev session started via `astra dev` will automatically pick them up and run them,
+while a Dev session started via `astra dev --no-commands` will purposely not run them.
+
+
+## Devfile (Advanced Usage)
+
+### Devfile Overview
+
+When `astra dev` is ran, it first looks in the `devfile.yaml` for the instructions to be executed, specifically: `components` and `commands`.
+
+Each command has a group `kind` key which correspond to either: `build`, `run`, `test`, or `debug`.
+
+These instructions make up the development cycle of `astra dev`.
+
+With the following example `devfile.yaml` file generated by `astra init` and selecting `nodejs`, a container image will be pushed to the cluster, as well as your source code in order to start the development inner loop cycle.
+
+A much more descriptive explanation on each part of a Devfile can be found on the [Devfile API reference](https://devfile.io/docs/2.2.0/devfile-schema) site.
+
+Below, we'll explain each section of the corresponding Devfile:
+
+### `metadata`
+
+Descriptive registry information with regards to the devfile being used.
+
+```yaml
+metadata:
+  description: Stack with Node.js 14
+  displayName: Node.js Runtime
+  icon: https://nodejs.org/static/images/logos/nodejs-new-pantone-black.svg
+  language: javascript
+  name: my-nodejs-app
+  projectType: nodejs
+  tags:
+  - NodeJS
+  - Express
+  - ubi8
+  version: 1.0.1
+schemaVersion: 2.0.0
+```
+
+### `starterProjects`
+The starter projects available for this devfile, shown when running `astra init`.
+```yaml
+starterProjects:
+- git:
+    remotes:
+      origin: https://github.com/astra-devfiles/nodejs-ex.git
+  name: nodejs-starter
+```
+
+### `commands`
+
+The list of commands to be used when running `astra dev`.
+
+Each command contains what will be ran within the container.
+
+The four groups are: build, run, test and debug.
+
+Build is what is initially ran when deploying to the cluster. It is what builds the command from the sources synced to the container.
+
+Run executes the command after it has been built from sources. 
+
+Debug is used instead of Run when running `astra dev --debug`.
+
+Test executes any tests which are available and part of your application. (This is NOT-YET-IMPLEMENTED in astra)
+
+All of these commands are needed to: build the program, execute the program, debug the application and run any applicable tests.
+```yaml
+commands:
+- exec:
+    commandLine: npm install
+    component: runtime
+    group:
+      isDefault: true
+      kind: build
+    workingDir: ${PROJECT_SOURCE}
+  id: install
+- exec:
+    commandLine: npm start
+    component: runtime
+    group:
+      isDefault: true
+      kind: run
+    workingDir: ${PROJECT_SOURCE}
+  id: run
+- exec:
+    commandLine: npm run debug
+    component: runtime
+    group:
+      isDefault: true
+      kind: debug
+    workingDir: ${PROJECT_SOURCE}
+  id: debug
+- exec:
+    commandLine: npm test
+    component: runtime
+    group:
+      isDefault: true
+      kind: test
+    workingDir: ${PROJECT_SOURCE}
+  id: test
+```
+
+### `components`
+
+Components can include containers as well as Kubernetes yaml.
+
+In our example, the nodejs container is being used on port 3000.
+```yaml
+components:
+- name: runtime
+  container:
+    endpoints:
+    - name: http-3000
+      targetPort: 3000
+    image: registry.access.redhat.com/ubi8/nodejs-14:latest
+    memoryLimit: 1024Mi
+    mountSources: true
+```
+
+Note that `astra` will set the container entrypoint to `tail -f /dev/null` if no `command` or `args` fields are explicitly defined for this component in the Devfile.
+This is a temporary workaround that allows `astra` to start non-terminating containers in which the Devfile commands will get executed.
+
+### Full Example
+
+```yaml
+metadata:
+  description: Stack with Node.js 14
+  displayName: Node.js Runtime
+  icon: https://nodejs.org/static/images/logos/nodejs-new-pantone-black.svg
+  language: javascript
+  name: my-nodejs-app
+  projectType: nodejs
+  tags:
+  - NodeJS
+  - Express
+  - ubi8
+  version: 1.0.1
+schemaVersion: 2.0.0
+
+starterProjects:
+- git:
+    remotes:
+      origin: https://github.com/astra-devfiles/nodejs-ex.git
+  name: nodejs-starter
+
+commands:
+- exec:
+    commandLine: npm install
+    component: runtime
+    group:
+      isDefault: true
+      kind: build
+    workingDir: ${PROJECT_SOURCE}
+  id: install
+- exec:
+    commandLine: npm start
+    component: runtime
+    group:
+      isDefault: true
+      kind: run
+    workingDir: ${PROJECT_SOURCE}
+  id: run
+- exec:
+    commandLine: npm run debug
+    component: runtime
+    group:
+      isDefault: true
+      kind: debug
+    workingDir: ${PROJECT_SOURCE}
+  id: debug
+- exec:
+    commandLine: npm test
+    component: runtime
+    group:
+      isDefault: true
+      kind: test
+    workingDir: ${PROJECT_SOURCE}
+  id: test
+
+components:
+- name: runtime
+  container:
+    endpoints:
+    - name: http-3000
+      targetPort: 3000
+    image: registry.access.redhat.com/ubi8/nodejs-14:latest
+    memoryLimit: 1024Mi
+    mountSources: true
+```
+
+## State File
+
+When the command `astra dev` is executed, the state of the command is saved to the file `.astra/devstate.json`. 
+
+This state file contains the forwarded ports:
+
+```json
+{
+ "forwardedPorts": [
+  {
+   "containerName": "runtime",
+   "localAddress": "127.0.0.1",
+   "localPort": 40001,
+   "containerPort": 3000
+  }
+ ]
+}
+```

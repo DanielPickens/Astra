@@ -1,0 +1,96 @@
+schemaVersion: 2.2.0
+metadata:
+  name: astra-dev
+  description: Website for astra, the developer-focused CLI for container development
+  displayName: astra.dev
+  icon: https://astra.dev/img/logo.png
+  version: 3.12.0
+  tags:
+  - NodeJS
+  - React
+  - Docusaurus
+  - astra
+
+variables:
+  DEPLOY_RESOURCE_NAME: astra-dev
+  DEPLOY_CONTAINER_IMAGE: astra-dev-webapp
+  DEPLOY_INGRESS_DOMAIN: 127.0.0.1.nip.io
+
+components:
+- name: doc-runtime
+  container:
+    image: registry.access.redhat.com/ubi8/nodejs-16:latest
+    memoryLimit: 512Mi
+    command: ['tail']
+    args: ['-f', '/dev/null']
+    endpoints:
+      - name: http-doc
+        targetPort: 3000
+
+- name: outerloop-build
+  image:
+    imageName: "{{DEPLOY_CONTAINER_IMAGE}}"
+    dockerfile:
+      uri: ./Dockerfile
+      buildContext: ${PROJECT_SOURCE}
+      rootRequired: false
+
+- name: outerloop-resources
+  kubernetes:
+    uri: ".kubernetes/resources.yaml"
+
+commands:
+
+- id: 0-install-yarn
+  exec:
+    commandLine: npm install --global yarn
+    component: doc-runtime
+
+#
+# Build
+#
+- id: doc-install-deps
+  exec:
+    commandLine: yarn
+    component: doc-runtime
+    workingDir: ${PROJECT_SOURCE}
+    group:
+      kind: build
+      isDefault: true
+
+#
+# Run
+#
+- id: doc-start
+  exec:
+    commandLine: yarn start
+    component: doc-runtime
+    hotReloadCapable: true
+    workingDir: ${PROJECT_SOURCE}
+    group:
+      kind: run
+      isDefault: true
+
+#
+# Deploy
+#
+- id: 2-deploy
+  composite:
+    commands:
+      - 20-build-image
+      - 21-k8s-resources
+    group:
+      isDefault: true
+      kind: deploy
+
+- id: 20-build-image
+  apply:
+    component: outerloop-build
+
+- id: 21-k8s-resources
+  apply:
+    component: outerloop-resources
+
+events:
+  postStart:
+    - 0-install-yarn

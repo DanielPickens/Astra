@@ -1,0 +1,62 @@
+package libdevfile
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/devfile/api/v2/pkg/apis/workspaces/v1alpha2"
+	"github.com/devfile/library/v2/pkg/devfile/parser"
+)
+
+// compositeCommand is a command implementation that represents non-parallel composite commands
+type compositeCommand struct {
+	command    v1alpha2.Command
+	devfileObj parser.DevfileObj
+}
+
+var _ command = (*compositeCommand)(nil)
+
+// newCompositeCommand creates a new command implementation which will execute the provided commands in the specified order
+func newCompositeCommand(devfileObj parser.DevfileObj, command v1alpha2.Command) *compositeCommand {
+	return &compositeCommand{
+		command:    command,
+		devfileObj: devfileObj,
+	}
+}
+
+func (o *compositeCommand) CheckValidity() error {
+	allCommands, err := allCommandsMap(o.devfileObj)
+	if err != nil {
+		return err
+	}
+	cmds := o.command.Composite.Commands
+	for _, cmd := range cmds {
+		if _, ok := allCommands[strings.ToLower(cmd)]; !ok {
+			return fmt.Errorf("composite command %q references command %q not found in devfile", o.command.Id, cmd)
+		}
+	}
+	return nil
+}
+
+// Execute loops over each command and executes them serially
+func (o *compositeCommand) Execute(ctx context.Context, handler Handler, parentGroup *v1alpha2.CommandGroup) error {
+	allCommands, err := allCommandsMap(o.devfileObj)
+	if err != nil {
+		return err
+	}
+	for _, devfileCmd := range o.command.Composite.Commands {
+		cmd, err := newCommand(o.devfileObj, allCommands[strings.ToLower(devfileCmd)])
+		if err != nil {
+			return err
+		}
+		if parentGroup == nil {
+			parentGroup = o.command.Composite.Group
+		}
+		err = cmd.Execute(ctx, handler, parentGroup)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

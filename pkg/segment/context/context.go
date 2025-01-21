@@ -1,0 +1,324 @@
+package context
+
+import (
+	"context"
+	"fmt"
+	"hash/adler32"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/spf13/pflag"
+
+	"github\.com/danielpickens/astra/pkg/kclient"
+	"github\.com/danielpickens/astra/pkg/platform"
+	"github\.com/danielpickens/astra/pkg/podman"
+
+	dfutil "github.com/devfile/library/v2/pkg/util"
+
+	"k8s.io/klog"
+)
+
+const (
+	Caller                  = "caller"
+	ComponentType           = "componentType"
+	ClusterType             = "clusterType"
+	PreviousTelemetryStatus = "wasTelemetryEnabled"
+	TelemetryStatus         = "isTelemetryEnabled"
+	DevfileName             = "devfileName"
+	Language                = "language"
+	ProjectType             = "projectType"
+	NOTFOUND                = "not-found"
+	InteractiveMode         = "interactive"
+	ExperimentalMode        = "experimental"
+	Flags                   = "flags"
+	Platform                = "platform"
+	PlatformVersion         = "platformVersion"
+	PreferenceParameter     = "parameter"
+	PreferenceValue         = "value"
+)
+
+const (
+	VSCode   = "vscode"
+	IntelliJ = "intellij"
+	JBoss    = "jboss"
+)
+
+// Add the (case-insensitive) preference parameter name here to have the corresponding value sent verbatim to telemetry.
+var clearTextPreferenceParams = []string{
+	"ConsentTelemetry",
+	"Ephemeral",
+	"PushTimeout",
+	"RegistryCacheTime",
+	"Timeout",
+	"UpdateNotification",
+}
+
+type contextKey struct{}
+
+var key = contextKey{}
+
+// properties is a struct used to store data in a context and it comes with locking mechanism
+type properties struct {
+	lock    sync.Mutex
+	storage map[string]interface{}
+}
+
+// NewContext returns a context more specifically to be used for telemetry data collection
+func NewContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, key, &properties{storage: make(map[string]interface{})})
+}
+
+// GetContextProperties retrieves all the values set in a given context
+func GetContextProperties(ctx context.Context) map[string]interface{} {
+	cProperties := propertiesFromContext(ctx)
+	if cProperties == nil {
+		return make(map[string]interface{})
+	}
+	return cProperties.values()
+}
+
+// SetComponentType sets componentType property for telemetry data when a component is created/pushed
+func SetComponentType(ctx context.Context, value string) {
+	setContextProperty(ctx, ComponentType, dfutil.ExtractComponentType(value))
+}
+
+// SetClusterType sets clusterType property for telemetry data when a component is pushed or a project is created/set
+func SetClusterType(ctx context.Context, client kclient.ClientInterface) {
+	var value string
+	if client == nil {
+		value = NOTFOUND
+	} else {
+		// We are not checking ServerVersion to decide the cluster type because it does not always return the version,
+		// it sometimes fails to retrieve the data if user is using minishift or plain oc cluster
+		isOC, err := client.IsProjectSupported()
+		if err != nil {
+			klog.V(3).Info(fmt.Errorf("unable to detect project support: %w", err))
+			value = NOTFOUND
+		} else {
+			if isOC {
+				isOC4, err := client.IsCSVSupported()
+				// Tastra: Add a unit test for this case
+				if err != nil {
+					value = "openshift"
+				} else {
+					if isOC4 {
+						value = "openshift4"
+					} else {
+						value = "openshift3"
+					}
+				}
+			} else {
+				value = "kubernetes"
+			}
+		}
+	}
+	setContextProperty(ctx, ClusterType, value)
+}
+
+// SetPlatform sets platform and platform_version properties for telemetry data
+func SetPlatform(ctx context.Context, client platform.Client) {
+	switch client := client.(type) {
+	case kclient.ClientInterface:
+		setPlatformCluster(ctx, client)
+	case podman.Client:
+		setPlatformPodman(ctx, client)
+	}
+}
+
+func setPlatformCluster(ctx context.Context, client kclient.ClientInterface) {
+	var value string
+	if client == nil {
+		value = NOTFOUND
+	} else {
+		// We are not checking ServerVersion to decide the cluster type because it does not always return the version,
+		// it sometimes fails to retrieve the data if user is using minishift or plain oc cluster
+
+		isOC, err := client.IsProjectSupported()
+		if err != nil {
+			klog.V(3).Info(fmt.Errorf("unable to detect project support: %w", err))
+			value = NOTFOUND
+		} else {
+			if isOC {
+				value = "openshift"
+				ocVersion, err := client.GetOCVersion()
+				if err == nil {
+					setContextProperty(ctx, PlatformVersion, ocVersion)
+				} else {
+					klog.V(3).Info(fmt.Errorf("unable to detect platform version: %w", err))
+				}
+			} else {
+				value = "kubernetes"
+				serverInfo, err := client.GetServerVersion(time.Second)
+				if err == nil {
+					setContextProperty(ctx, PlatformVersion, serverInfo.KubernetesVersion)
+				} else {
+					klog.V(3).Info(fmt.Errorf("unable to detect platform version: %w", err))
+				}
+			}
+		}
+	}
+	setContextProperty(ctx, Platform, value)
+}
+
+func setPlatformPodman(ctx context.Context, client podman.Client) {
+	setContextProperty(ctx, Platform, "podman")
+	version, err := client.Version(ctx)
+	if err != nil {
+		klog.V(3).Info(fmt.Errorf("unable to get podman version: %w", err))
+		return
+	}
+	setContextProperty(ctx, PlatformVersion, version.Client.Version)
+}
+
+// SetPreviousTelemetryStatus sets telemetry status before a command is run
+func SetPreviousTelemetryStatus(ctx context.Context, isEnabled bool) {
+	setContextProperty(ctx, PreviousTelemetryStatus, isEnabled)
+}
+
+// SetTelemetryStatus sets telemetry status after a command is run
+func SetTelemetryStatus(ctx context.Context, isEnabled bool) {
+	setContextProperty(ctx, TelemetryStatus, isEnabled)
+}
+
+func SetSignal(ctx context.Context, signal os.Signal) {
+	setContextProperty(ctx, "receivedSignal", signal.String())
+}
+
+func SetDevfileName(ctx context.Context, devfileName string) {
+	setContextProperty(ctx, DevfileName, devfileName)
+}
+
+func SetLanguage(ctx context.Context, language string) {
+	setContextProperty(ctx, Language, language)
+}
+
+func SetProjectType(ctx context.Context, projectType string) {
+	setContextProperty(ctx, ProjectType, projectType)
+}
+
+func SetInteractive(ctx context.Context, interactive bool) {
+	setContextProperty(ctx, InteractiveMode, interactive)
+}
+
+func SetExperimentalMode(ctx context.Context, value bool) {
+	setContextProperty(ctx, ExperimentalMode, value)
+}
+
+// SetFlags sets flags property for telemetry to record what flags were used
+func SetFlags(ctx context.Context, flags *pflag.FlagSet) {
+	var changedFlags []string
+	flags.VisitAll(func(f *pflag.Flag) {
+		if f.Changed {
+			if f.Name == "logtostderr" {
+				// skip "logtostderr" flag, for some reason it is showing as changed even when it is not
+				return
+			}
+			changedFlags = append(changedFlags, f.Name)
+		}
+	})
+	// the flags can't have spaces, so the output is space separated list of the flag names
+	setContextProperty(ctx, Flags, strings.Join(changedFlags, " "))
+}
+
+// SetCaller sets the caller property for telemetry to record the tool used to call astra.
+// Passing an empty caller is not considered invalid, but means that astra was invoked directly from the command line.
+// In all other cases, the value is verified against a set of allowed values.
+// Also note that unexpected values are added to the telemetry context, even if an error is returned.
+func SetCaller(ctx context.Context, caller string) error {
+	var err error
+	s := strings.TrimSpace(strings.ToLower(caller))
+	switch s {
+	case "", VSCode, IntelliJ, JBoss:
+		// An empty caller means that astra was invoked directly from the command line
+		err = nil
+	default:
+		// Note: we purposely don't disclose the list of allowed values
+		err = fmt.Errorf("unknown caller type: %q", caller)
+	}
+	setContextProperty(ctx, Caller, s)
+	return err
+}
+
+// SetPreferenceParameter tracks the preferences options usage, by recording both the parameter name and value.
+// By default, values are anonymized. Only parameters explicitly declared in the 'clearTextPreferenceParams' list will be recorded verbatim.
+// Setting value to nil means that the parameter has been unset in the preferences; so the value will not be recorded.
+func SetPreferenceParameter(ctx context.Context, param string, value *string) {
+	setContextProperty(ctx, PreferenceParameter, param)
+
+	if value == nil {
+		return
+	}
+
+	isClearTextParam := func() bool {
+		for _, clearTextParam := range clearTextPreferenceParams {
+			if strings.EqualFold(param, clearTextParam) {
+				return true
+			}
+		}
+		return false
+	}
+
+	recordedValue := *value
+	if !isClearTextParam() {
+		// adler32 for fast (and short) checksum computation, while minimizing the probability of collisions (which are not that important here).
+		// We just want to make sure that the same value returns the same anonymized string, while making it hard to guess the original string.
+		recordedValue = strconv.FormatUint(uint64(adler32.Checksum([]byte(recordedValue))), 16)
+	}
+	setContextProperty(ctx, PreferenceValue, recordedValue)
+}
+
+// GetPreviousTelemetryStatus gets the telemetry status that was seen before a command is run
+func GetPreviousTelemetryStatus(ctx context.Context) bool {
+	wasEnabled, ok := GetContextProperties(ctx)[PreviousTelemetryStatus]
+	if ok {
+		return wasEnabled.(bool)
+	}
+	return false
+}
+
+// GetTelemetryStatus gets the current telemetry status that is set after a command is run
+func GetTelemetryStatus(ctx context.Context) bool {
+	isEnabled, ok := GetContextProperties(ctx)[TelemetryStatus]
+	if ok {
+		return isEnabled.(bool)
+	}
+	return false
+}
+
+// set safely sets value for a key in storage
+func (p *properties) set(name string, value interface{}) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.storage[name] = value
+}
+
+// values safely retrieves a deep copy of the storage
+func (p *properties) values() map[string]interface{} {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	ret := make(map[string]interface{})
+	for k, v := range p.storage {
+		ret[k] = v
+	}
+	return ret
+}
+
+// propertiesFromContext retrieves the properties instance from the context
+func propertiesFromContext(ctx context.Context) *properties {
+	value := ctx.Value(key)
+	if cast, ok := value.(*properties); ok {
+		return cast
+	}
+	return nil
+}
+
+// setContextProperty sets the value of a key in given context for telemetry data
+func setContextProperty(ctx context.Context, key string, value interface{}) {
+	cProperties := propertiesFromContext(ctx)
+	if cProperties != nil {
+		cProperties.set(key, value)
+	}
+}

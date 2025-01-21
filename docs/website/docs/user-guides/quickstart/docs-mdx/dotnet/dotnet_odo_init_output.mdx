@@ -1,0 +1,45 @@
+```console
+$ astra init
+  __
+ /  \__     Initializing a new component
+ \__/  \    Files: Source code detected, a Devfile will be determined based upon source code autodetection
+ /  \__/    astra version: v3.16.1
+ \__/
+
+Interactive mode enabled, please answer the following questions:
+ ✓  Determining a Devfile for the current directory [1s]
+Based on the files in the current directory astra detected
+Supported architectures: all
+Language: .NET
+Project type: dotnet
+The devfile "dotnet60:1.0.2" from the registry "DefaultDevfileRegistry" will be downloaded.
+? Is this correct? No
+? Select architectures to filter by:  [Use arrows to move, space to select, <right> to all, <left> to none, type to filter]
+> [x]  amd64
+[ ]  arm64
+[ ]  ppc64le
+[ ]  s390x
+? Select architectures to filter by: amd64
+? Select language: .NET
+? Select project type: .NET 6.0
+ ✓  Downloading devfile "dotnet60" from registry "DefaultDevfileRegistry" [3s]
+
+↪ Container Configuration "dotnet":
+  OPEN PORTS:
+    - 8080
+  ENVIRONMENT VARIABLES:
+    - ASPNETCORE_ENVIRONMENT = Development
+    - ASPNETCORE_URLS = http://*:8080
+    - CONFIGURATION = Debug
+    - STARTUP_PROJECT = app.csproj
+
+? Select container for which you want to change configuration? NONE - configuration is correct
+? Enter component name: my-dotnet-app
+
+You can automate this command by executing:
+   astra init --name my-dotnet-app --devfile dotnet60 --devfile-registry DefaultDevfileRegistry
+
+Your new component 'my-dotnet-app' is ready in the current directory.
+To start editing your component, use 'astra dev' and open this folder in your favorite IDE.
+Changes will be directly reflected on the cluster.
+```

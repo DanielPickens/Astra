@@ -1,0 +1,57 @@
+{
+  "name": "astra-dev",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "docusaurus": "docusaurus",
+    "start": "docusaurus start --host 0.0.0.0",
+    "build": "docusaurus build && ./build_gastrac.sh",
+    "swizzle": "docusaurus swizzle",
+    "deploy": "docusaurus deploy",
+    "clear": "docusaurus clear",
+    "serve": "docusaurus serve",
+    "write-translations": "docusaurus write-translations",
+    "write-heading-ids": "docusaurus write-heading-ids"
+  },
+  "dependencies": {
+    "@algolia/client-search": "^4.22.1",
+    "@docusaurus/core": "^2.4.1",
+    "@docusaurus/preset-classic": "^2.4.3",
+    "@docusaurus/theme-search-algolia": "^2.4.1",
+    "@mdx-js/react": "^1.6.21",
+    "@segment/snippet": "^5.2.1",
+    "@svgr/webpack": "^8.1.0",
+    "browserslist": "^4.22.2",
+    "clsx": "^2.1.0",
+    "css-what": "^6.1.0",
+    "docusaurus-astra-plugin-segment": "file:docusaurus-astra-plugin-segment",
+    "file-loader": "^6.2.0",
+    "glob-parent": "^6.0.2",
+    "node-forge": "^1.3.1",
+    "prism-react-renderer": "^2.3.1",
+    "prismjs": "^1.29.0",
+    "react": "^17.0.1",
+    "react-dom": "^17.0.1",
+    "react-loadable": "^5.5.0",
+    "trim": "1.0.1",
+    "url-loader": "^4.1.1",
+    "webpack": "^5.94.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.5%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@docusaurus/module-type-aliases": "^2.4.3",
+    "@tsconfig/docusaurus": "^2.0.2",
+    "typescript": "^5.3.3"
+  }
+}

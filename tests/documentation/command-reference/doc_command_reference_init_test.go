@@ -1,0 +1,260 @@
+package docautomation
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/google/go-cmp/cmp"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github\.com/danielpickens/astra/tests/helper"
+)
+
+var _ = Describe("doc command reference astra init", Label(helper.LabelNoCluster), func() {
+	var commonVar helper.CommonVar
+	var commonPath = filepath.Join("command-reference", "docs-mdx", "init")
+	var outputStringFormat = "```console\n$ astra %s\n%s```\n"
+
+	BeforeEach(func() {
+		commonVar = helper.CommonBeforeEach()
+		helper.Chdir(commonVar.Context)
+		Expect(helper.VerifyFileExists(".astra/env/env.yaml")).To(BeFalse())
+	})
+
+	AfterEach(func() {
+		helper.CommonAfterEach(commonVar)
+	})
+	// interactive tests do not provide the same output every time,
+	// so we'll skip these tests until we have more coverage and then investigate a better way to test this
+	Context("Interactive Mode", func() {
+		It("Empty directory", func() {
+			args := []string{"astra", "init"}
+			out, err := helper.RunInteractive(args, []string{"astra_LOG_LEVEL=0"}, func(ctx helper.InteractiveContext) {
+				helper.ExpectString(ctx, "Select architectures")
+				helper.SendLine(ctx, "")
+
+				helper.ExpectString(ctx, "Select language")
+				helper.SendLine(ctx, "Java")
+
+				helper.ExpectString(ctx, "Select project type")
+				helper.SendLine(ctx, "")
+
+				if helper.HasAtLeastTwoVersions("", "java-maven") {
+					helper.ExpectString(ctx, "Select version")
+					helper.SendLine(ctx, "")
+				}
+
+				helper.ExpectString(ctx, "Select container for which you want to change configuration?")
+				helper.SendLine(ctx, "")
+
+				helper.ExpectString(ctx, "Which starter project do you want to use")
+				helper.SendLine(ctx, "")
+
+				helper.ExpectString(ctx, "Enter component name")
+				helper.SendLine(ctx, "my-java-maven-app")
+
+				helper.ExpectString(ctx, "Changes will be directly reflected on the cluster.")
+			})
+			Expect(err).To(BeNil())
+			got := helper.StripAnsi(out)
+			got = helper.StripInteractiveQuestion(got)
+			got = fmt.Sprintf(outputStringFormat, args[1], helper.StripSpinner(got))
+			got = helper.StripGitCommitFromVersion(got)
+			file := "interactive_mode_empty_directory_output.mdx"
+			want := helper.GetMDXContent(filepath.Join(commonPath, file))
+			diff := cmp.Diff(want, got)
+			Expect(diff).To(BeEmpty(), file)
+		})
+
+		When("the directory is not empty", func() {
+			BeforeEach(func() {
+				helper.CopyExample(filepath.Join("source", "nodejs"), commonVar.Context)
+			})
+
+			It("Directory with sources", func() {
+				args := []string{"astra", "init"}
+				out, err := helper.RunInteractive(args, []string{"astra_LOG_LEVEL=0"}, func(ctx helper.InteractiveContext) {
+					helper.ExpectString(ctx, "Is this correct?")
+					helper.SendLine(ctx, "")
+
+					helper.ExpectString(ctx, "✓  Downloading devfile \"nodejs:2.1.1\" from registry \"DefaultDevfileRegistry\"")
+
+					helper.ExpectString(ctx, "Select container for which you want to change configuration?")
+					helper.SendLine(ctx, "")
+
+					helper.ExpectString(ctx, "Enter component name")
+					helper.SendLine(ctx, "")
+
+					helper.ExpectString(ctx, "Changes will be directly reflected on the cluster.")
+				})
+				Expect(err).To(BeNil())
+				got := helper.StripAnsi(out)
+				got = helper.StripInteractiveQuestion(got)
+				got = fmt.Sprintf(outputStringFormat, args[1], helper.StripSpinner(got))
+				got = helper.StripGitCommitFromVersion(got)
+				file := "interactive_mode_directory_with_sources_output.mdx"
+				want := helper.GetMDXContent(filepath.Join(commonPath, file))
+				diff := cmp.Diff(want, got)
+				Expect(diff).To(BeEmpty(), file)
+			})
+		})
+	})
+	Context("Non Interactive Mode", func() {
+
+		It("Fetch Devfile of a specific version", func() {
+			args := []string{"init", "--devfile", "go", "--name", "my-go-app", "--devfile-version", "2.2.0"}
+			out := helper.Cmd("astra", args...).ShouldPass().Out()
+			got := fmt.Sprintf(outputStringFormat, strings.Join(args, " "), helper.StripSpinner(out))
+			got = helper.StripGitCommitFromVersion(got)
+			file := "versioned_devfile_output.mdx"
+			want := helper.GetMDXContent(filepath.Join(commonPath, file))
+			diff := cmp.Diff(want, got)
+			Expect(diff).To(BeEmpty(), file)
+		})
+
+		It("Fetch Devfile of the latest version", func() {
+			args := []string{"init", "--devfile", "go", "--name", "my-go-app", "--devfile-version", "latest"}
+			out := helper.Cmd("astra", args...).ShouldPass().Out()
+			got := fmt.Sprintf(outputStringFormat, strings.Join(args, " "), helper.StripSpinner(out))
+			got = helper.StripGitCommitFromVersion(got)
+			file := "latest_versioned_devfile_output.mdx"
+			want := helper.GetMDXContent(filepath.Join(commonPath, file))
+			diff := cmp.Diff(want, got)
+			Expect(diff).To(BeEmpty(), file)
+		})
+
+		It("Fetch Devfile from a URL", func() {
+			args := []string{"init", "--devfile-path", fmt.Sprintf("%s/devfiles/nodejs-angular", commonVar.GetDevfileRegistryURL()), "--name", "my-nodejs-app", "--starter", "nodejs-angular-starter"}
+			out := helper.Cmd("astra", args...).ShouldPass().Out()
+			got := fmt.Sprintf(outputStringFormat, strings.Join(args, " "), helper.StripSpinner(out))
+			got = helper.StripGitCommitFromVersion(got)
+			got = helper.ReplaceRegistryUrl(commonVar, got)
+			file := "devfile_from_url_output.mdx"
+			want := helper.GetMDXContent(filepath.Join(commonPath, file))
+			diff := cmp.Diff(want, got)
+			Expect(diff).To(BeEmpty(), file)
+		})
+
+		Context("fetching devfile from a registry", func() {
+			When("setting up the registry", func() {
+				const (
+					defaultReg = "DefaultDevfileRegistry"
+					stagingReg = "StagingRegistry"
+				)
+				BeforeEach(func() {
+					helper.Cmd("astra", "preference", "remove", "registry", defaultReg, "-f").ShouldPass()
+					devfileRegistryURL := commonVar.GetDevfileRegistryURL()
+					helper.Cmd("astra", "preference", "add", "registry", defaultReg, devfileRegistryURL).ShouldPass()
+					helper.Cmd("astra", "preference", "add", "registry", stagingReg, devfileRegistryURL).ShouldPass()
+				})
+
+				AfterEach(func() {
+					helper.Cmd("astra", "preference", "remove", "registry", stagingReg, "-f").ShouldPass()
+					helper.SetDefaultDevfileRegistry(&commonVar)
+				})
+
+				removePreferenceKeys := func(docString string) string {
+					return "[...]\n\n" + docString[strings.Index(docString, "Devfile registries"):]
+				}
+				checkRegistriesOutput := func() {
+					args := []string{"preference", "view"}
+					out := helper.Cmd("astra", args...).ShouldPass().Out()
+					got := helper.StripAnsi(out)
+					got = removePreferenceKeys(got)
+					got = fmt.Sprintf(outputStringFormat, strings.Join(args, " "), helper.StripSpinner(got))
+					got = helper.ReplaceRegistryUrl(commonVar, got)
+					file := "registry_output.mdx"
+					want := helper.GetMDXContent(filepath.Join(commonPath, file))
+					want = helper.ReplaceRegistryUrl(commonVar, want)
+					wantLines, err := helper.ExtractLines(want)
+					Expect(err).ShouldNot(HaveOccurred())
+					gotLines, err := helper.ExtractLines(got)
+					Expect(err).ShouldNot(HaveOccurred())
+					Expect(gotLines).ShouldNot(BeEmpty())
+					Expect(gotLines).Should(HaveLen(len(wantLines)),
+						fmt.Sprintf("%s: unexpected number of lines:\n==want:\n%s\n\n==got:\n%s", file, want, got))
+					for i, line := range wantLines {
+						if strings.Contains(line, "SECURE") {
+							continue
+						}
+						wantFields := strings.Fields(line)
+						gotFields := strings.Fields(gotLines[i])
+						Expect(gotFields).Should(HaveExactElements(wantFields),
+							fmt.Sprintf("%s: mismatch at line %d:\n==want line:\n%s\n\n==got line:\n%s", file, i, line, gotLines[i]))
+					}
+				}
+
+				It("Fetch Devfile from a specific registry of the list", func() {
+					By("checking for required registries", func() {
+						checkRegistriesOutput()
+					})
+
+					By("checking for the init output", func() {
+						args := []string{"init", "--name", "my-spring-app", "--devfile", "java-springboot", "--devfile-registry", "DefaultDevfileRegistry", "--starter", "springbootproject"}
+						out := helper.Cmd("astra", args...).ShouldPass().Out()
+						got := fmt.Sprintf(outputStringFormat, strings.Join(args, " "), helper.StripSpinner(out))
+						got = helper.StripGitCommitFromVersion(got)
+						file := "devfile_from_specific_registry_output.mdx"
+						want := helper.GetMDXContent(filepath.Join(commonPath, file))
+						diff := cmp.Diff(want, got)
+						Expect(diff).To(BeEmpty(), file)
+					})
+				})
+				It("Fetch Devfile from any registry of the list", func() {
+					By("checking for required registries", func() {
+						checkRegistriesOutput()
+					})
+
+					By("checking for the registry list output", func() {
+						args := []string{"registry", "--devfile", "nodejs-react"}
+						out := helper.Cmd("astra", args...).ShouldPass().Out()
+						got := helper.StripAnsi(out)
+						got = fmt.Sprintf(outputStringFormat, strings.Join(args, " "), helper.StripSpinner(got))
+						file := "registry_list_output.mdx"
+						want := helper.GetMDXContent(filepath.Join(commonPath, file))
+						diff := cmp.Diff(want, got)
+						Expect(diff).To(BeEmpty(), file)
+					})
+
+					By("checking for the init output", func() {
+						args := []string{"init", "--devfile", "nodejs-react", "--name", "my-nr-app"}
+						out := helper.Cmd("astra", args...).ShouldPass().Out()
+						got := fmt.Sprintf(outputStringFormat, strings.Join(args, " "), helper.StripSpinner(out))
+						got = helper.StripGitCommitFromVersion(got)
+						file := "devfile_from_any_registry_output.mdx"
+						want := helper.GetMDXContent(filepath.Join(commonPath, file))
+						diff := cmp.Diff(want, got)
+						Expect(diff).To(BeEmpty(), file)
+					})
+				})
+
+			})
+		})
+
+		It("Fetch Devfile from a URL", func() {
+			args := []string{"init", "--devfile-path", fmt.Sprintf("%s/devfiles/nodejs-angular", commonVar.GetDevfileRegistryURL()), "--name", "my-nodejs-app", "--starter", "nodejs-angular-starter"}
+			out := helper.Cmd("astra", args...).ShouldPass().Out()
+			got := fmt.Sprintf(outputStringFormat, strings.Join(args, " "), helper.StripSpinner(out))
+			got = helper.StripGitCommitFromVersion(got)
+			got = helper.ReplaceRegistryUrl(commonVar, got)
+			file := "devfile_from_url_output.mdx"
+			want := helper.GetMDXContent(filepath.Join(commonPath, file))
+			diff := cmp.Diff(want, got)
+			Expect(diff).To(BeEmpty(), file)
+		})
+
+		It("set application ports after fetching Devfile", func() {
+			args := []string{"init", "--devfile", "go", "--name", "my-go-app", "--run-port", "3456", "--run-port", "9876"}
+			out := helper.Cmd("astra", args...).ShouldPass().Out()
+			got := fmt.Sprintf(outputStringFormat, strings.Join(args, " "), helper.StripSpinner(out))
+			got = helper.StripGitCommitFromVersion(got)
+			file := "devfile_with_run-port_output.mdx"
+			want := helper.GetMDXContent(filepath.Join(commonPath, file))
+			diff := cmp.Diff(want, got)
+			Expect(diff).To(BeEmpty(), file)
+		})
+	})
+
+})

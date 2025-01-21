@@ -1,0 +1,503 @@
+package segment
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/user"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/golang/mock/gomock"
+	"github.com/sethvargo/go-envconfig"
+
+	"github\.com/danielpickens/astra/pkg/config"
+	"github\.com/danielpickens/astra/pkg/kclient"
+	"github\.com/danielpickens/astra/pkg/testingutil/filesystem"
+
+	"github\.com/danielpickens/astra/pkg/log"
+	"github\.com/danielpickens/astra/pkg/preference"
+	scontext "github\.com/danielpickens/astra/pkg/segment/context"
+	"github\.com/danielpickens/astra/pkg/version"
+)
+
+type segmentResponse struct {
+	Batch []struct {
+		UserId    string `json:"userId"`
+		MessageId string `json:"messageId"`
+		Traits    struct {
+			OS string `json:"os"`
+		} `json:"traits"`
+		Properties struct {
+			Error         string `json:"error"`
+			ErrorType     string `json:"error-type"`
+			Success       bool   `json:"success"`
+			Version       string `json:"version"`
+			ComponentType string `json:"componentType"`
+			ClusterType   string `json:"clusterType"`
+		} `json:"properties"`
+		Type string `json:"type"`
+	} `json:"batch"`
+	MessageID string `json:"messageId"`
+}
+
+func mockServer() (chan []byte, *httptest.Server) {
+	done := make(chan []byte, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		bin, err := io.ReadAll(r.Body)
+		if err != nil {
+			log.Error(err)
+			return
+		}
+		done <- bin
+	}))
+	return done, server
+}
+
+func TestClientUploadWithoutConsent(t *testing.T) {
+	body, server := mockServer()
+	defer server.Close()
+	defer close(body)
+
+	c, err := newCustomClient(createConfigDir(t), server.URL)
+	if err != nil {
+		t.Error(err)
+	}
+
+	testError := errors.New("error occurred")
+	uploadData := fakeTelemetryData("astra preference view", testError, context.Background())
+	// run a command, astra preference view
+	ctx := context.Background()
+	scontext.SetTelemetryStatus(ctx, false)
+	if err = c.Upload(ctx, uploadData); err != nil {
+		t.Error(err)
+	}
+
+	if err = c.Close(); err != nil {
+		t.Error(err)
+	}
+
+	select {
+	case x := <-body:
+		t.Errorf("server should not receive data: %q", x)
+	default:
+	}
+}
+
+func TestClientUploadWithConsent(t *testing.T) {
+	body, server := mockServer()
+	defer server.Close()
+	defer close(body)
+
+	tests := []struct {
+		cmd      string
+		testName string
+		err      error
+		success  bool
+		errType  string
+		version  string
+	}{
+		{
+			testName: "command ran successfully",
+			err:      nil,
+			success:  true,
+			errType:  "",
+			version:  version.VERSION,
+		},
+		{
+			testName: "command failed",
+			err:      errors.New("some error occurred"),
+			success:  false,
+			errType:  "*errors.errorString",
+			version:  version.VERSION,
+		},
+	}
+	for _, tt := range tests {
+		t.Log("Running test: ", tt.testName)
+		t.Run(tt.testName, func(t *testing.T) {
+			c, err := newCustomClient(createConfigDir(t), server.URL)
+			if err != nil {
+				t.Error(err)
+			}
+			uploadData := fakeTelemetryData("astra init", tt.err, context.Background())
+			// upload the data to Segment
+			ctx := scontext.NewContext(context.Background())
+			scontext.SetTelemetryStatus(ctx, true)
+			if err = c.Upload(ctx, uploadData); err != nil {
+				t.Error(err)
+			}
+			// segment.Client.SegmentClient uploads the data to server when a condition is met or when the connection is closed.
+			// This condition can be added by setting a BatchSize or Interval to the SegmentClient.
+			// BatchSize or Interval conditions have not been set for segment.Client.SegmentClient, so we will need to
+			// close the connection in order to upload the data to server.
+			// In case a condition is added, we can close the client in the teardown.
+			if err = c.Close(); err != nil {
+				t.Error(err)
+			}
+			// Note: This will need to be changed if segment.Client.SegmentClient has BatchSize or Interval set to something.
+			select {
+			case x := <-body:
+				s := segmentResponse{}
+				if err1 := json.Unmarshal(x, &s); err1 != nil {
+					t.Error(err1)
+				}
+				// Response returns 2 Batches in response -
+				// 1) identify - user's system information in case the server did not already have this information,
+				// and 2) track - information about the fired command
+				// This condition checks if both the responses were received
+				if s.Batch[0].Type != "identify" && s.Batch[1].Type != "track" {
+					t.Errorf("Missing Identify or Track information.\nIdentify: %v\nTrack:%v", s.Batch[0].Type, s.Batch[1].Type)
+				}
+				if s.Batch[0].Traits.OS != runtime.GOOS {
+					t.Error("OS does not match")
+				}
+				if !tt.success {
+					if s.Batch[1].Properties.Error != tt.err.Error() {
+						t.Error("Error does not match")
+					}
+				} else {
+					if s.Batch[1].Properties.Error != "" {
+						t.Error("Error does not match")
+					}
+				}
+				if s.Batch[1].Properties.Success != tt.success {
+					t.Error("Success does not match")
+				}
+				if s.Batch[1].Properties.ErrorType != tt.errType {
+					t.Error("Error Type does not match")
+				}
+				if !strings.Contains(s.Batch[1].Properties.Version, version.VERSION) {
+					t.Error("astra version does not match")
+				}
+
+			default:
+				t.Error("Server should receive data")
+			}
+		})
+	}
+}
+
+func TestIsTelemetryEnabled(t *testing.T) {
+	type testStruct struct {
+		name                 string
+		env                  map[string]string
+		consentTelemetryPref bool
+		want                 func(astraDisableTelemetry, astraTrackingConsent string, consentTelemetry bool) bool
+	}
+	var tests []testStruct
+
+	// When there is no telemetry-related environment variable defined, rely on the ConsentTelemetry preference
+	for _, consentTelemetry := range []bool{true, false} {
+		consentTelemetry := consentTelemetry
+		tests = append(tests, testStruct{
+			name: fmt.Sprintf(
+				"astra_DISABLE_TELEMETRY and astra_TRACKING_CONSENT not set, consentTelemetry=%v", consentTelemetry),
+			consentTelemetryPref: consentTelemetry,
+			want: func(_, _ string, consentTelemetry bool) bool {
+				return consentTelemetry
+			},
+		})
+	}
+
+	// When only astra_TRACKING_CONSENT is present in the env, it takes precedence over the ConsentTelemetry preference,
+	// unless it has an invalid value.
+	for _, astraTrackingConsent := range []string{"", "yes", "no", "bar"} {
+		for _, consentTelemetry := range []bool{true, false} {
+			astraTrackingConsent := astraTrackingConsent
+			consentTelemetry := consentTelemetry
+			tests = append(tests, testStruct{
+				name: fmt.Sprintf(
+					"astra_DISABLE_TELEMETRY not set, astra_TRACKING_CONSENT=%q, consentTelemetry=%v", astraTrackingConsent, consentTelemetry),
+				consentTelemetryPref: consentTelemetry,
+				env: map[string]string{
+					TrackingConsentEnv: astraTrackingConsent,
+				},
+				want: func(_, astraTrackingConsent string, consentTelemetry bool) bool {
+					// astra_TRACKING_CONSENT takes precedence
+					switch astraTrackingConsent {
+					case "yes":
+						return true
+					case "no":
+						return false
+					default:
+						return consentTelemetry
+					}
+				},
+			})
+		}
+	}
+
+	// When only astra_DISABLE_TELEMETRY is present in the env, it takes precedence over the ConsentTelemetry preference,
+	// only if astra_DISABLE_TELEMETRY=true
+	for _, astraDisableTelemetry := range []string{"true", "false"} {
+		for _, consentTelemetry := range []bool{true, false} {
+			astraDisableTelemetry := astraDisableTelemetry
+			consentTelemetry := consentTelemetry
+			tests = append(tests, testStruct{
+				name: fmt.Sprintf("astra_DISABLE_TELEMETRY=%q,astra_TRACKING_CONSENT not set,ConsentTelemetry=%v",
+					astraDisableTelemetry, consentTelemetry),
+				env: map[string]string{
+					//lint:ignore SA1019 We deprecated this env var, but until it is removed, we still want to test it
+					DisableTelemetryEnv: astraDisableTelemetry,
+				},
+				want: func(astraDisableTelemetry, _ string, consentTelemetry bool) bool {
+					if astraDisableTelemetry == "true" {
+						return false
+					}
+					//All other cases, we rely on the ConsentTelemetry preference
+					return consentTelemetry
+				},
+			})
+		}
+	}
+	//Cases where all the environment variables are there.
+	for _, astraDisableTelemetry := range []string{"true", "false"} {
+		for _, astraTrackingConsent := range []string{"", "yes", "no", "bar"} {
+			for _, consentTelemetry := range []bool{true, false} {
+				astraDisableTelemetry := astraDisableTelemetry
+				astraTrackingConsent := astraTrackingConsent
+				consentTelemetry := consentTelemetry
+				tests = append(tests, testStruct{
+					name: fmt.Sprintf("astra_DISABLE_TELEMETRY=%q,astra_TRACKING_CONSENT=%q,ConsentTelemetry=%v",
+						astraDisableTelemetry, astraTrackingConsent, consentTelemetry),
+					env: map[string]string{
+						//lint:ignore SA1019 We deprecated this env var, but until it is removed, we still want to test it
+						DisableTelemetryEnv: astraDisableTelemetry,
+						TrackingConsentEnv:  astraTrackingConsent,
+					},
+					consentTelemetryPref: consentTelemetry,
+					want: func(astraDisableTelemetry, astraTrackingConsent string, consentTelemetry bool) bool {
+						if astraDisableTelemetry == "true" || astraTrackingConsent == "no" {
+							return false
+						}
+						if astraTrackingConsent == "yes" {
+							return true
+						}
+						return consentTelemetry
+					},
+				})
+			}
+		}
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			cfg := preference.NewMockClient(ctrl)
+			cfg.EXPECT().GetConsentTelemetry().Return(tt.consentTelemetryPref).AnyTimes()
+
+			envConfig, err := config.GetConfigurationWith(envconfig.MapLookuper(tt.env))
+			if err != nil {
+				t.Errorf("Get configuration fails: %v", err)
+			}
+			got := IsTelemetryEnabled(cfg, *envConfig)
+
+			//lint:ignore SA1019 We deprecated this env var, but until it is removed, we still want to test it
+			want := tt.want(tt.env[DisableTelemetryEnv], tt.env[TrackingConsentEnv], tt.consentTelemetryPref)
+			if got != want {
+				t.Errorf(tt.name, "IsTelemetryEnabled: got %v, wanted %v. Env is set to %v. %s is set to %q.",
+					got, want, tt.env, preference.ConsentTelemetrySetting, tt.consentTelemetryPref)
+			}
+		})
+	}
+}
+
+func TestClientUploadWithContext(t *testing.T) {
+	var uploadData TelemetryData
+	body, server := mockServer()
+	defer server.Close()
+	defer close(body)
+
+	ctx := scontext.NewContext(context.Background())
+	scontext.SetTelemetryStatus(ctx, true)
+
+	for k, v := range map[string]string{scontext.ComponentType: "nodejs", scontext.ClusterType: ""} {
+		switch k {
+		case scontext.ComponentType:
+			scontext.SetComponentType(ctx, v)
+			uploadData = fakeTelemetryData("astra init", nil, ctx)
+		case scontext.ClusterType:
+			fakeClient, _ := kclient.FakeNew()
+			scontext.SetClusterType(ctx, fakeClient)
+			uploadData = fakeTelemetryData("astra set project", nil, ctx)
+		}
+		c, err := newCustomClient(createConfigDir(t), server.URL)
+		if err != nil {
+			t.Error(err)
+		}
+		// upload the data to Segment
+		if err = c.Upload(ctx, uploadData); err != nil {
+			t.Error(err)
+		}
+		if err = c.Close(); err != nil {
+			t.Error(err)
+		}
+		select {
+		case x := <-body:
+			s := segmentResponse{}
+			if err1 := json.Unmarshal(x, &s); err1 != nil {
+				t.Error(err1)
+			}
+			if s.Batch[1].Type == "identify" {
+				switch k {
+				case scontext.ComponentType:
+					if s.Batch[1].Properties.ComponentType != v {
+						t.Errorf("%v did not match. Want: %q Got: %q", scontext.ComponentType, v, s.Batch[1].Properties.ComponentType)
+					}
+				case scontext.ClusterType:
+					if s.Batch[1].Properties.ClusterType != v {
+						t.Errorf("%v did not match. Want: %q Got: %q", scontext.ClusterType, v, s.Batch[1].Properties.ClusterType)
+					}
+				}
+			}
+		default:
+			t.Error("Server should receive some data")
+		}
+	}
+}
+
+func TestSetError(t *testing.T) {
+	user, err := user.Current()
+	if err != nil {
+		t.Error(err.Error())
+	}
+
+	tests := []struct {
+		err    error
+		hasPII bool
+	}{
+		{
+			err:    errors.New("this is an error string"),
+			hasPII: false,
+		},
+		{
+			err:    fmt.Errorf("failed to execute devfile commands for component %s-comp. failed to Get https://my-cluster.project.local cannot run exec command [curl https://mycluster.domain.local -u foo -p password 123]", user.Username),
+			hasPII: true,
+		},
+	}
+
+	for _, tt := range tests {
+		var want string
+		got := SetError(tt.err)
+
+		// if error has PII, string returned by SetError must not be the same as the error since it was sanitized
+		// else it will be the same.
+		if tt.hasPII {
+			want = fmt.Sprintf("failed to execute devfile commands for component %s-comp. failed to Get %s cannot run exec command %s", Sanitizer, Sanitizer, Sanitizer)
+		} else {
+			want = tt.err.Error()
+		}
+		if got != want {
+			t.Errorf("got: %q\nwant:%q", got, want)
+		}
+
+	}
+}
+
+func Test_sanitizeExec(t *testing.T) {
+	err := fmt.Errorf("unable to execute the run command: unable to exec command [curl -K localhost:8080 -u user1 -p pwd123]")
+	got := sanitizeExec(err.Error())
+	want := fmt.Sprintf("unable to execute the run command: unable to exec command %s", Sanitizer)
+	if got != want {
+		t.Errorf("got: %q\nwant:%q", got, want)
+	}
+}
+
+func Test_sanitizeURL(t *testing.T) {
+	cases := []error{
+		fmt.Errorf("resource project validation check failed.: Get https://my-cluster.project.local request cancelled"),
+		fmt.Errorf("resource project validation check failed.: Get http://my-cluster.project.local request cancelled"),
+		fmt.Errorf("resource project validation check failed.: Get http://192.168.0.1:6443 request cancelled"),
+		fmt.Errorf("resource project validation check failed.: Get 10.18.25.1 request cancelled"),
+		fmt.Errorf("resource project validation check failed.: Get www.sample.com request cancelled"),
+	}
+
+	for _, err := range cases {
+		got := sanitizeURL(err.Error())
+		want := fmt.Sprintf("resource project validation check failed.: Get %s request cancelled", Sanitizer)
+		if got != want {
+			t.Errorf("got: %q\nwant:%q", got, want)
+		}
+	}
+}
+
+func Test_sanitizeFilePath(t *testing.T) {
+	unixPath := "/home/xyz/.astra/preference.yaml"
+	windowsPath := "C:\\User\\XYZ\\preference.yaml"
+
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "filepath-unix",
+			err:  fmt.Errorf("cannot find the preference file at %s", unixPath),
+		},
+		{
+			name: "filepath-windows",
+			err:  fmt.Errorf("cannot find the preference file at %s", windowsPath),
+		},
+	}
+	for _, tt := range cases {
+		if tt.name == "filepath-windows" && os.Getenv("GOOS") != "windows" {
+			t.Skip("Cannot run a windows test on a unix system")
+		} else if tt.name == "filepath-unix" && os.Getenv("GOOS") != "linux" {
+			t.Skip("Cannot run a unix test on a windows system")
+		}
+
+		got := sanitizeFilePath(tt.err.Error())
+		want := fmt.Sprintf("cannot find the preference file at %s", Sanitizer)
+		if got != want {
+			t.Errorf("got: %q\nwant:%q", got, want)
+		}
+	}
+}
+
+func Test_sanitizeUserInfo(t *testing.T) {
+	user, err1 := user.Current()
+	if err1 != nil {
+		t.Error(err1.Error())
+	}
+
+	err := fmt.Errorf("cannot create component name with %s", user.Username)
+	got := sanitizeUserInfo(err.Error())
+	want := fmt.Sprintf("cannot create component name with %s", Sanitizer)
+	if got != want {
+		t.Errorf("got: %q\nwant:%q", got, want)
+	}
+}
+
+// createConfigDir creates a mock filesystem
+func createConfigDir(t *testing.T) string {
+	fs := filesystem.NewFakeFs()
+	configDir, err := fs.TempDir(os.TempDir(), "telemetry")
+	if err != nil {
+		t.Error(err)
+	}
+	return configDir
+}
+
+// fakeTelemetryData returns fake data to test segment client Upload
+func fakeTelemetryData(cmd string, err error, ctx context.Context) TelemetryData {
+	return TelemetryData{
+		Event: cmd,
+		Properties: TelemetryProperties{
+			Duration:      time.Second.Milliseconds(),
+			Error:         SetError(err),
+			ErrorType:     ErrorType(err),
+			Success:       err == nil,
+			Tty:           RunningInTerminal(),
+			Version:       version.VERSION,
+			CmdProperties: scontext.GetContextProperties(ctx),
+		},
+	}
+}

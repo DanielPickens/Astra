@@ -1,0 +1,16 @@
+Now we're ready to deploy our application on the cluster:
+
+```console
+astra deploy
+```
+
+<details>
+<summary>Sample Output</summary>
+    {props.deployout}
+</details>
+
+
+:::note
+If you are using the [quay.io](https://quay.io/repository/) registry, you might have to change the permissions of the newly pushed image to Public to continue.
+Otherwise, you might see failures related to pulling the image.
+:::

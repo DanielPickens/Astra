@@ -1,0 +1,148 @@
+# This devfile has both inner and outer loop components. The outer loop components do start up on the cluster.
+# It creates following resources on the cluster:
+# - inner loop - Deployment for the component; a Pod for the k8s component named `innerloop-pod`
+# - outer loop - Two Deployments named devfile-nodejs-deploy & devfile-nodejs-deploy-2; a Pod named for the k8s component named `outerloop-pod`
+schemaVersion: 2.2.0
+metadata:
+  language: javascript
+  name: devfile-nodejs-deploy
+  projectType: nodejs
+variables:
+  CONTAINER_IMAGE: quay.io/tkral/devfile-nodejs-deploy:latest
+commands:
+  - id: install
+    exec:
+      commandLine: npm install
+      component: runtime
+      group:
+        isDefault: true
+        kind: build
+      workingDir: $PROJECT_SOURCE
+  - id: innerloop-pod-command
+    apply:
+      component: innerloop-pod
+  - id: start
+    exec:
+      commandLine: npm start
+      component: runtime
+      workingDir: $PROJECT_SOURCE
+  - id: run
+    composite:
+      commands:
+        - innerloop-pod-command
+        - start
+      group:
+        kind: run
+        isDefault: true
+  - id: build-image
+    apply:
+      component: prod-image
+  - id: deploy-deployment
+    apply:
+      component: outerloop-deploy
+  - id: deploy-another-deployment
+    apply:
+      component: another-deployment
+  - id: outerloop-pod-command
+    apply:
+      component: outerloop-pod
+  - id: deploy
+    composite:
+      commands:
+        - build-image
+        - deploy-deployment
+        - deploy-another-deployment
+        - outerloop-pod-command
+      group:
+        kind: deploy
+        isDefault: true
+components:
+  - container:
+      endpoints:
+        - name: http-8080
+          targetPort: 8080
+      image: registry.access.redhat.com/ubi8/nodejs-14:latest
+      memoryLimit: 1024Mi
+      mountSources: true
+    name: runtime
+  - name: prod-image
+    image:
+      imageName: "{{CONTAINER_IMAGE}}"
+      dockerfile:
+        uri: ./Dockerfile
+        buildContext: ${PROJECT_SOURCE}
+  - name: outerloop-deploy
+    kubernetes:
+      inlined: |
+        kind: Deployment
+        apiVersion: apps/v1
+        metadata:
+          name: devfile-nodejs-deploy
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: devfile-nodejs-deploy
+          template:
+            metadata:
+              labels:
+                app: devfile-nodejs-deploy
+            spec:
+              containers:
+                - name: main
+                  image: "{{CONTAINER_IMAGE}}"
+                  readinessProbe:
+                    httpGet:
+                      port: 3000
+  - name: another-deployment
+    kubernetes:
+      inlined: |
+        kind: Deployment
+        apiVersion: apps/v1
+        metadata:
+          name: devfile-nodejs-deploy-2
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: devfile-nodejs-deploy-2
+          template:
+            metadata:
+              labels:
+                app: devfile-nodejs-deploy-2
+            spec:
+              containers:
+                - name: main
+                  image: "{{CONTAINER_IMAGE}}"
+                  readinessProbe:
+                    httpGet:
+                      port: 3000
+  - name: innerloop-pod
+    kubernetes:
+      # This will be applied only if referenced by an apply command, in which case it will be applied when the apply command is invoked.
+      # Not setting deployByDefault to false and not referencing this component will make it automatically created by both 'astra dev' and 'astra deploy'.
+      deployByDefault: false
+      inlined: |
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          name: myapp-inner
+        spec:
+          containers:
+          - name: main
+            image: quay.io/quay/busybox
+            command: ["/bin/sh"]
+            args: [ "-c", "while true; do echo \"`date` - this is infinite while loop\"; sleep 5; done" ]
+  - name: outerloop-pod
+    kubernetes:
+      inlined: |
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          name: myapp-outer
+        spec:
+          containers:
+          - name: main
+            image: quay.io/quay/busybox
+            command: ["/bin/sh"]
+            args: [ "-c", "while true; do echo \"`date` - this is infinite while loop\"; sleep 5; done" ]
