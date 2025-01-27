@@ -78,8 +78,6 @@ func (s *DefaultApiService) ComponentCommandPost(ctx context.Context, componentC
 			Message: fmt.Sprintf("command name %q not supported. Supported values are: %q", componentCommandPostRequest.Name, "push"),
 		}), nil
 	}
-}
-
 // ComponentGet -
 func (s *DefaultApiService) ComponentGet(ctx context.Context) (openapi.ImplResponse, error) {
 	value, _, err := describe.DescribeDevfileComponent(ctx, s.kubeClient, s.podmanClient, s.stateClient)
@@ -88,6 +86,14 @@ func (s *DefaultApiService) ComponentGet(ctx context.Context) (openapi.ImplRespo
 			Message: fmt.Sprintf("error getting the description of the component: %s", err),
 		}), nil
 	}
+
+	// Check for another status response in openapi.Response property object
+	if value.Status != "success" {
+		return openapi.Response(http.StatusConflict, openapi.GeneralError{
+			Message: fmt.Sprintf("component description status is not successful: %s", value.Status),
+		}), nil
+	}
+
 	return openapi.Response(http.StatusOK, value), nil
 }
 

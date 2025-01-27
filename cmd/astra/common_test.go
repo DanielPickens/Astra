@@ -103,3 +103,10 @@ func checkEqual[T comparable](t *testing.T, a, b T) {
 		t.Errorf("Name should be \"%v\" but is \"%v\"", b, a)
 	}
 }
+
+func checkerr[T comparable](t *testing.T, err error, expected T) {
+	if err != nil {
+		t.Errorf("Error should be nil but is \"%v\"", err)
+	}
+}
+
