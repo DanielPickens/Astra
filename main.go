@@ -188,6 +188,21 @@ func checkSpeed(speed Speed) {
 	writeJson("speed.json", speed)
 }
 
+func CheckJsonOutput(t *testing.T, b []byte) {
+	var output []api.DetectionResult
+	err := json.Unmarshal(b, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkEqual(t, output[0].Devfile, "framework-name")
+	checkEqual(t, output[0].DevfileRegistry, "TheRegistryName")
+	checkEqual(t, output[0].Name, "aName")
+	checkEqual(t, output[0].DevfileVersion, "1.1.1")
+	checkEqual(t, output[0].ApplicationPorts[0], 8080)
+	checkEqual(t, output[0].ApplicationPorts[1], 3000)
+}
+
+
 func writeJson(filename string, data interface{}) {
 	// Convert the data to JSON
 	jsonData, err := json.Marshal(data)
