@@ -1,4 +1,4 @@
-module github\.com/danielpickens/astra
+module github.com/danielpickens/astra
 
 go 1.19
 
